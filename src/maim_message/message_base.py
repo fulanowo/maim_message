@@ -266,18 +266,45 @@ class BaseMessageInfo:
         Returns:
             BaseMessageInfo: 新的实例
         """
-        group_info = GroupInfo.from_dict(data.get("group_info", {}))
-        user_info = UserInfo.from_dict(data.get("user_info", {}))
-        format_info = FormatInfo.from_dict(data.get("format_info", {}))
-        template_info = TemplateInfo.from_dict(data.get("template_info", {}))
-        sender_info = (
-            SenderInfo.from_dict(data.get("sender_info", {}))
-            if data.get("sender_info")
+        group_info_data = data.get("group_info")
+        group_info = (
+            GroupInfo.from_dict(group_info_data)
+            if isinstance(group_info_data, dict)
             else None
         )
+
+        user_info_data = data.get("user_info")
+        user_info = (
+            UserInfo.from_dict(user_info_data)
+            if isinstance(user_info_data, dict)
+            else None
+        )
+
+        format_info_data = data.get("format_info")
+        format_info = (
+            FormatInfo.from_dict(format_info_data)
+            if isinstance(format_info_data, dict)
+            else None
+        )
+
+        template_info_data = data.get("template_info")
+        template_info = (
+            TemplateInfo.from_dict(template_info_data)
+            if isinstance(template_info_data, dict)
+            else None
+        )
+
+        sender_info_data = data.get("sender_info")
+        sender_info = (
+            SenderInfo.from_dict(sender_info_data)
+            if isinstance(sender_info_data, dict)
+            else None
+        )
+
+        receiver_info_data = data.get("receiver_info")
         receiver_info = (
-            ReceiverInfo.from_dict(data.get("receiver_info", {}))
-            if data.get("receiver_info")
+            ReceiverInfo.from_dict(receiver_info_data)
+            if isinstance(receiver_info_data, dict)
             else None
         )
         return cls(

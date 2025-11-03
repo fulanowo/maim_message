@@ -56,6 +56,7 @@ def _build_text_message(content: str) -> MessageBase:
         raw_message=content,
     )
 
+
 incoming_queue: asyncio.Queue[MessageBase] | None = None
 
 
