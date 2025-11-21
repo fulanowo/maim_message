@@ -1,0 +1,628 @@
+"""WebSocket客户端网络驱动器 - 纯网络I/O层，不处理业务逻辑"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import threading
+import time
+import uuid
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Optional, Set
+from enum import Enum
+
+import websockets
+from websockets.exceptions import ConnectionClosed, ConnectionClosedError
+
+logger = logging.getLogger(__name__)
+
+
+class EventType(Enum):
+    """事件类型"""
+    CONNECT = "connect"
+    DISCONNECT = "disconnect"
+    MESSAGE = "message"
+
+
+@dataclass
+class ConnectionConfig:
+    """连接配置"""
+    url: str
+    api_key: str
+    platform: str
+    connection_uuid: Optional[str] = None
+    headers: Optional[Dict[str, str]] = None
+    ping_interval: int = 20
+    ping_timeout: int = 10
+    close_timeout: int = 10
+    max_reconnect_attempts: int = 5
+    reconnect_delay: float = 1.0
+    max_reconnect_delay: float = 30.0
+
+    # SSL配置
+    ssl_enabled: bool = False
+    ssl_verify: bool = True
+    ssl_ca_certs: Optional[str] = None
+    ssl_certfile: Optional[str] = None
+    ssl_keyfile: Optional[str] = None
+    ssl_check_hostname: bool = True
+
+    def __post_init__(self) -> None:
+        if self.connection_uuid is None:
+            self.connection_uuid = str(uuid.uuid4())
+        if self.headers is None:
+            self.headers = {}
+
+    def get_headers(self) -> Dict[str, str]:
+        """获取连接用的headers"""
+        headers = self.headers.copy()
+        headers.update({
+            "x-uuid": self.connection_uuid,
+            "x-apikey": self.api_key,
+            "x-platform": self.platform
+        })
+        return headers
+
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典格式"""
+        return {
+            "url": self.url,
+            "api_key": self.api_key,
+            "platform": self.platform,
+            "connection_uuid": self.connection_uuid,
+            "headers": self.headers,
+            "ping_interval": self.ping_interval,
+            "ping_timeout": self.ping_timeout,
+            "close_timeout": self.close_timeout,
+            "max_reconnect_attempts": self.max_reconnect_attempts,
+            "reconnect_delay": self.reconnect_delay,
+            "max_reconnect_delay": self.max_reconnect_delay
+        }
+
+
+@dataclass
+class NetworkEvent:
+    """网络事件"""
+    event_type: EventType
+    connection_uuid: str
+    config: ConnectionConfig
+    payload: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    timestamp: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.timestamp == 0.0:
+            self.timestamp = time.time()
+
+
+class ClientNetworkDriver:
+    """客户端网络驱动器 - 纯I/O层，负责WebSocket连接管理"""
+
+    def __init__(self):
+        # 连接管理
+        self.connections: Dict[str, ConnectionConfig] = {}
+        self.active_connections: Dict[str, websockets.WebSocketServerProtocol] = {}
+        self.connection_states: Dict[str, str] = {}  # "connecting", "connected", "disconnected", "error"
+
+        # 跨线程通信
+        self.event_queue: Optional[asyncio.Queue] = None
+        self.main_loop: Optional[asyncio.AbstractEventLoop] = None
+        self.worker_thread: Optional[threading.Thread] = None
+        self.running = False
+
+        # 连接任务管理
+        self.connection_tasks: Dict[str, asyncio.Task] = {}
+
+        # 统计信息
+        self.stats = {
+            "total_connections": 0,
+            "current_connections": 0,
+            "messages_received": 0,
+            "messages_sent": 0,
+            "bytes_received": 0,
+            "bytes_sent": 0,
+            "reconnect_attempts": 0
+        }
+
+        # 优雅关闭支持
+        self._shutdown_event = asyncio.Event()
+        self._worker_loop_task: Optional[asyncio.Task] = None
+
+    async def add_connection(self, config: ConnectionConfig) -> bool:
+        """添加新的连接配置"""
+        connection_uuid = config.connection_uuid
+
+        if connection_uuid in self.connections:
+            logger.warning(f"Connection {connection_uuid} already exists")
+            return False
+
+        self.connections[connection_uuid] = config
+        self.connection_states[connection_uuid] = "disconnected"
+        logger.info(f"Added connection {connection_uuid} to {config.url}")
+        return True
+
+    async def remove_connection(self, connection_uuid: str) -> bool:
+        """移除连接"""
+        if connection_uuid not in self.connections:
+            logger.warning(f"Connection {connection_uuid} not found")
+            return False
+
+        # 停止连接任务
+        if connection_uuid in self.connection_tasks:
+            self.connection_tasks[connection_uuid].cancel()
+            try:
+                await self.connection_tasks[connection_uuid]
+            except asyncio.CancelledError:
+                pass
+            del self.connection_tasks[connection_uuid]
+
+        # 断开WebSocket连接
+        if connection_uuid in self.active_connections:
+            websocket = self.active_connections[connection_uuid]
+            try:
+                await websocket.close()
+            except Exception:
+                pass
+            del self.active_connections[connection_uuid]
+
+        # 清理状态
+        del self.connections[connection_uuid]
+        del self.connection_states[connection_uuid]
+
+        logger.info(f"Removed connection {connection_uuid}")
+        return True
+
+    async def connect(self, connection_uuid: str) -> bool:
+        """连接到指定服务器"""
+        if connection_uuid not in self.connections:
+            logger.error(f"Connection {connection_uuid} not found")
+            return False
+
+        if self.connection_states[connection_uuid] == "connected":
+            logger.info(f"Connection {connection_uuid} already connected")
+            return True
+
+        # 启动连接任务
+        if connection_uuid not in self.connection_tasks:
+            # 如果网络驱动器运行在独立线程中，需要将任务发送到那个线程
+            if self.main_loop and self.main_loop != asyncio.get_running_loop():
+                # 使用call_soon_threadsafe将任务发送到工作线程
+                logger.info(f"📡 将连接任务发送到工作线程: {connection_uuid}")
+                self.main_loop.call_soon_threadsafe(
+                    lambda: asyncio.create_task(self._connection_loop(connection_uuid))
+                )
+            else:
+                # 在当前事件循环中创建任务
+                logger.info(f"📡 在当前事件循环中创建连接任务: {connection_uuid}")
+                task = asyncio.create_task(
+                    self._connection_loop(connection_uuid)
+                )
+                self.connection_tasks[connection_uuid] = task
+
+        return True
+
+    async def disconnect(self, connection_uuid: str) -> bool:
+        """断开指定连接"""
+        if connection_uuid not in self.connections:
+            logger.warning(f"Connection {connection_uuid} not found")
+            return False
+
+        # 停止连接任务
+        if connection_uuid in self.connection_tasks:
+            if self.connection_tasks[connection_uuid] and not self.connection_tasks[connection_uuid].done():
+                self.connection_tasks[connection_uuid].cancel()
+                try:
+                    await self.connection_tasks[connection_uuid]
+                except asyncio.CancelledError:
+                    pass
+            del self.connection_tasks[connection_uuid]
+
+        # 断开WebSocket连接
+        if connection_uuid in self.active_connections:
+            websocket = self.active_connections[connection_uuid]
+            try:
+                await websocket.close()
+                logger.info(f"Disconnected {connection_uuid}")
+            except Exception as e:
+                logger.warning(f"Error disconnecting {connection_uuid}: {e}")
+            finally:
+                del self.active_connections[connection_uuid]
+
+        self.connection_states[connection_uuid] = "disconnected"
+        return True
+
+    async def _connection_loop(self, connection_uuid: str) -> None:
+        """单个连接的管理循环"""
+        config = self.connections[connection_uuid]
+        reconnect_delay = config.reconnect_delay
+        reconnect_attempts = 0
+
+        while self.running and connection_uuid in self.connections and not self._shutdown_event.is_set():
+            try:
+                # 尝试连接
+                self.connection_states[connection_uuid] = "connecting"
+                logger.info(f"Connecting {connection_uuid} to {config.url}")
+
+                # 使用async with语法建立WebSocket连接并传递headers
+                # 构建websockets连接参数
+                ws_kwargs = {
+                    "ping_interval": config.ping_interval,
+                    "ping_timeout": config.ping_timeout,
+                    "close_timeout": config.close_timeout,
+                    "additional_headers": config.get_headers()
+                }
+
+                logger.info(f"🔌 开始连接 {connection_uuid} 到 {config.url}")
+                logger.info(f"📋 连接参数: {ws_kwargs}")
+                logger.info(f"📋 Headers: {config.get_headers()}")
+
+                # 添加SSL配置
+                if config.ssl_enabled:
+                    import ssl
+                    ssl_context = ssl.create_default_context()
+
+                    if not config.ssl_verify:
+                        ssl_context.check_hostname = False
+                        ssl_context.verify_mode = ssl.CERT_NONE
+
+                    if config.ssl_ca_certs:
+                        ssl_context.load_verify_locations(config.ssl_ca_certs)
+
+                    if config.ssl_certfile and config.ssl_keyfile:
+                        ssl_context.load_cert_chain(
+                            config.ssl_certfile,
+                            keyfile=config.ssl_keyfile
+                        )
+
+                    if not config.ssl_check_hostname:
+                        ssl_context.check_hostname = False
+
+                    ws_kwargs["ssl"] = ssl_context
+
+                logger.info(f"🚀 正在创建WebSocket连接到: {config.url}")
+                websocket_connect = websockets.connect(config.url, **ws_kwargs)
+                logger.info(f"✅ WebSocket连接对象已创建，开始握手...")
+
+                async with websocket_connect as websocket:
+                    logger.info(f"🤝 WebSocket握手成功，连接已建立")
+                    self.active_connections[connection_uuid] = websocket
+                    self.connection_states[connection_uuid] = "connected"
+                    reconnect_attempts = 0
+                    reconnect_delay = config.reconnect_delay
+
+                    # 更新统计
+                    self.stats["total_connections"] += 1
+                    self.stats["current_connections"] += 1
+
+                    logger.info(f"Connection {connection_uuid} established")
+
+                    # 发送连接事件
+                    await self._send_event(EventType.CONNECT, connection_uuid)
+
+                    # 消息接收循环
+                    async for message in websocket:
+                        if not self.running or connection_uuid not in self.connections:
+                            break
+
+                        await self._handle_message(connection_uuid, message)
+
+            except ConnectionClosedError as e:
+                logger.info(f"🔌 连接 {connection_uuid} 已关闭: {e}")
+                logger.info(f"📊 连接统计: 当前尝试={reconnect_attempts}, 最大尝试={config.max_reconnect_attempts}")
+            except Exception as e:
+                logger.info(f"❌ 连接异常 {connection_uuid}: {type(e).__name__}: {e}")
+                logger.info(f"📋 连接详细信息 {connection_uuid}:")
+                logger.info(f"  - 目标URL: {config.url}")
+                logger.info(f"  - 当前尝试: {reconnect_attempts}")
+                logger.info(f"  - 最大尝试: {config.max_reconnect_attempts}")
+                logger.info(f"  - SSL启用: {config.ssl_enabled}")
+                logger.info(f"  - 连接状态: {self.connection_states.get(connection_uuid, 'unknown')}")
+                logger.info(f"  - 运行状态: {self.running}")
+                logger.info(f"  - 关闭事件状态: {self._shutdown_event.is_set()}")
+
+                # 检查特定错误类型
+                if "Connection refused" in str(e):
+                    logger.info(f"🔍 检测到连接被拒绝错误 - 服务器可能未运行")
+                elif "timeout" in str(e).lower():
+                    logger.info(f"🔍 检测到超时错误 - 网络问题或服务器响应慢")
+                elif "SSL" in str(e) or "TLS" in str(e):
+                    logger.info(f"🔍 检测到SSL/TLS错误 - 证书或协议问题")
+
+                self.stats["reconnect_attempts"] += 1
+                await self._send_event(EventType.DISCONNECT, connection_uuid, error=str(e))
+
+            finally:
+                # 清理连接状态
+                logger.info(f"🧹 开始清理连接 {connection_uuid} 的状态")
+                if connection_uuid in self.active_connections:
+                    del self.active_connections[connection_uuid]
+                    logger.info(f"✅ 已从活跃连接中移除 {connection_uuid}")
+                self.stats["current_connections"] -= 1
+                self.connection_states[connection_uuid] = "disconnected"
+                logger.info(f"📊 连接状态已更新为: disconnected, 当前连接数: {self.stats['current_connections']}")
+
+            # 重连逻辑 - 检查是否收到关闭信号
+            should_reconnect = (self.running and
+                connection_uuid in self.connections and
+                reconnect_attempts < config.max_reconnect_attempts and
+                not self._shutdown_event.is_set())
+
+            logger.info(f"🔄 重连检查 {connection_uuid}:")
+            logger.info(f"  - 运行状态: {self.running}")
+            logger.info(f"  - 连接存在: {connection_uuid in self.connections}")
+            logger.info(f"  - 重连尝试: {reconnect_attempts}/{config.max_reconnect_attempts}")
+            logger.info(f"  - 关闭信号: {self._shutdown_event.is_set()}")
+            logger.info(f"  - 应该重连: {should_reconnect}")
+
+            if should_reconnect:
+                reconnect_attempts += 1
+                logger.info(f"🔄 {connection_uuid} 将在 {reconnect_delay}s 后进行第 {reconnect_attempts} 次重连")
+
+                # 使用wait_for来支持关闭中断
+                try:
+                    logger.info(f"⏳ 等待 {reconnect_delay}s 后重连...")
+                    await asyncio.wait_for(asyncio.sleep(reconnect_delay), timeout=30.0)
+                    logger.info(f"✅ 重连等待完成")
+                except asyncio.TimeoutError:
+                    logger.info(f"⏰ 重连等待超时，继续重连逻辑")
+                    pass
+
+                # 检查关闭状态
+                if self._shutdown_event.is_set():
+                    logger.info(f"🛑 收到关闭信号，停止 {connection_uuid} 的重连")
+                    break
+
+                reconnect_delay = min(config.max_reconnect_delay, reconnect_delay * 2)
+                logger.info(f"📈 下次重连延迟将调整为: {reconnect_delay}s")
+            else:
+                if connection_uuid in self.connections:
+                    if self._shutdown_event.is_set():
+                        logger.info(f"🛑 {connection_uuid} 优雅关闭")
+                    else:
+                        logger.info(f"❌ {connection_uuid} 达到最大重连次数")
+                        self.connection_states[connection_uuid] = "error"
+                else:
+                    logger.info(f"🗑️ 连接 {connection_uuid} 已被移除，停止重连")
+                break
+
+    async def _handle_message(self, connection_uuid: str, message: Any) -> None:
+        """处理接收到的消息"""
+        try:
+            # 更新统计
+            self.stats["messages_received"] += 1
+            if isinstance(message, str):
+                self.stats["bytes_received"] += len(message.encode('utf-8'))
+
+            logger.info(f"📨 收到来自 {connection_uuid} 的消息: {type(message).__name__}")
+
+            # 解析JSON消息
+            if isinstance(message, str):
+                try:
+                    data = json.loads(message)
+                    logger.info(f"✅ JSON解析成功: {list(data.keys())}")
+                except json.JSONDecodeError as e:
+                    logger.info(f"⚠️ JSON解析失败: {e}")
+                    data = {"raw_message": message}
+            else:
+                data = message if isinstance(message, dict) else {"data": str(message)}
+
+            # 立即发送ACK确认（如果需要）
+            msg_id = data.get("msg_id")
+            if msg_id and data.get("type") != "sys_ack":
+                logger.info(f"📬 发送ACK确认: msg_id={msg_id}")
+                await self._send_ack(connection_uuid, msg_id)
+
+            # 发送消息事件到业务层
+            logger.info(f"🚀 发送消息事件到业务层: type={data.get('type', 'unknown')}")
+            await self._send_event(EventType.MESSAGE, connection_uuid, data)
+
+        except Exception as e:
+            logger.info(f"❌ 处理 {connection_uuid} 消息时出错: {e}")
+            logger.error(f"Message handling error from {connection_uuid}: {e}")
+
+    async def _send_ack(self, connection_uuid: str, msg_id: str) -> None:
+        """发送消息确认"""
+        try:
+            ack_message = {
+                "ver": 1,
+                "msg_id": str(uuid.uuid4()),
+                "type": "sys_ack",
+                "meta": {
+                    "uuid": connection_uuid,
+                    "acked_msg_id": msg_id,
+                    "timestamp": time.time()
+                },
+                "payload": {
+                    "status": "received",
+                    "client_timestamp": time.time()
+                }
+            }
+
+            await self._send_raw_message(connection_uuid, ack_message)
+
+        except Exception as e:
+            logger.error(f"Error sending ACK to {connection_uuid}: {e}")
+
+    async def _send_raw_message(self, connection_uuid: str, message: Dict[str, Any]) -> bool:
+        """发送原始消息到指定连接"""
+        if connection_uuid not in self.active_connections:
+            logger.info(f"⚠️ 连接 {connection_uuid} 不活跃，无法发送消息")
+            return False
+
+        websocket = self.active_connections[connection_uuid]
+
+        try:
+            message_str = json.dumps(message)
+            message_size = len(message_str.encode('utf-8'))
+            logger.info(f"📤 向 {connection_uuid} 发送消息: type={message.get('type', 'unknown')}, size={message_size}字节")
+
+            await websocket.send(message_str)
+
+            # 更新统计
+            self.stats["messages_sent"] += 1
+            self.stats["bytes_sent"] += message_size
+
+            logger.info(f"✅ 消息发送成功: 总计发送 {self.stats['messages_sent']} 条消息")
+
+            return True
+
+        except ConnectionClosed:
+            logger.info(f"🔌 发送消息时连接 {connection_uuid} 已关闭")
+            self.connection_states[connection_uuid] = "disconnected"
+            return False
+        except Exception as e:
+            logger.info(f"❌ 向 {connection_uuid} 发送消息失败: {e}")
+            logger.error(f"Error sending message to {connection_uuid}: {e}")
+            return False
+
+    async def send_message(self, connection_uuid: str, message: Dict[str, Any]) -> bool:
+        """发送消息到指定连接（业务层接口）"""
+        return await self._send_raw_message(connection_uuid, message)
+
+    async def _send_event(self, event_type: EventType, connection_uuid: str,
+                    payload: Optional[Dict[str, Any]] = None, error: Optional[str] = None) -> None:
+        """发送事件到业务层"""
+        if not self.event_queue:
+            logger.warning("Event queue not available, event dropped")
+            return
+
+        try:
+            config = self.connections.get(connection_uuid)
+            if not config:
+                logger.warning(f"No config for connection {connection_uuid}")
+                return
+
+            event = NetworkEvent(
+                event_type=event_type,
+                connection_uuid=connection_uuid,
+                config=config,
+                payload=payload,
+                error=error
+            )
+
+            # 直接发送事件到队列
+            await self.event_queue.put(event)
+
+        except Exception as e:
+            logger.error(f"Error sending event to business layer: {e}")
+
+    def get_connection_count(self) -> int:
+        """获取当前连接数"""
+        return len(self.active_connections)
+
+    def get_connection_list(self) -> Set[str]:
+        """获取所有连接UUID"""
+        return set(self.connections.keys())
+
+    def get_active_connections(self) -> Set[str]:
+        """获取活跃连接UUID"""
+        return set(self.active_connections.keys())
+
+    def get_connection_state(self, connection_uuid: str) -> Optional[str]:
+        """获取连接状态"""
+        return self.connection_states.get(connection_uuid)
+
+    def get_connection_config(self, connection_uuid: str) -> Optional[ConnectionConfig]:
+        """获取连接配置"""
+        return self.connections.get(connection_uuid)
+
+    def get_stats(self) -> Dict[str, Any]:
+        """获取统计信息"""
+        return self.stats.copy()
+
+    def _worker_loop_run(self, event_queue: asyncio.Queue) -> None:
+        """工作线程中运行的事件循环"""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        try:
+            # 设置事件队列和主循环引用
+            self.event_queue = event_queue
+            self.main_loop = loop
+            self.running = True
+
+            # 运行连接管理循环
+            loop.run_until_complete(self._manage_connections())
+
+        except Exception as e:
+            logger.error(f"Worker loop error: {e}")
+        finally:
+            self.running = False
+            loop.close()
+
+    async def _manage_connections(self) -> None:
+        """管理所有连接"""
+        while self.running:
+            try:
+                await asyncio.sleep(0.1)  # 避免CPU占用过高
+            except asyncio.CancelledError:
+                break
+
+    async def start(self, event_queue: asyncio.Queue) -> None:
+        """启动网络驱动器"""
+        if self.running:
+            logger.warning("Network driver already running")
+            return
+
+        # 启动工作线程
+        self.worker_thread = threading.Thread(
+            target=self._worker_loop_run,
+            args=(event_queue,),
+            daemon=True
+        )
+        self.worker_thread.start()
+
+        # 等待工作线程启动
+        await asyncio.sleep(0.5)
+
+        logger.info("Client network driver started")
+
+    async def stop(self) -> None:
+        """停止网络驱动器"""
+        if not self.running:
+            return
+
+        logger.info("Stopping client network driver...")
+
+        # 首先发送关闭信号
+        self._shutdown_event.set()
+        self.running = False
+
+        # 优雅断开所有连接
+        for connection_uuid in list(self.active_connections.keys()):
+            try:
+                websocket = self.active_connections[connection_uuid]
+                await websocket.close(code=1000, reason="Graceful shutdown")
+            except Exception as e:
+                logger.debug(f"Error closing connection {connection_uuid}: {e}")
+
+        self.active_connections.clear()
+
+        # 优雅停止所有连接任务
+        for connection_uuid, task in list(self.connection_tasks.items()):
+            if task and not task.done():
+                try:
+                    # 等待任务优雅完成
+                    await asyncio.wait_for(task, timeout=3.0)
+                except asyncio.TimeoutError:
+                    logger.info(f"Task timeout for {connection_uuid}, cancelling")
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                except Exception as e:
+                    logger.debug(f"Error stopping task {connection_uuid}: {e}")
+
+        self.connection_tasks.clear()
+
+        # 清理连接状态
+        self.connection_states.clear()
+        self.connections.clear()
+
+        # 等待工作线程结束
+        if self.worker_thread and self.worker_thread.is_alive():
+            self.worker_thread.join(timeout=5.0)
+
+        logger.info("Client network driver stopped gracefully")
