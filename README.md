@@ -4,18 +4,19 @@
 
 晦涩难懂的readme -> [点这里](./README_OLD.md)
 
+## 🆕 API-Server 版本 (v2.0+)
+
+API-Server版本提供多用户隔离、API Key认证等高级功能，适合需要用户管理和安全认证的生产环境。
+
+📖 **详细文档**:
+- [API-Server 使用指南](doc/api_server_usage_guide.md)
+- [API 接口参考](doc/api_interface_reference.md)
+
+---
+
 ## 主要特性
 
-### API-Server Version (v0.5.8+, 推荐)
-
-*   **多连接客户端:** 支持单个客户端同时连接多个服务端，实现多平台消息聚合和智能路由
-*   **智能消息路由:** 客户端根据目标的 `api_key+platform` 自动选择最佳连接
-*   **灵活的目标选择:** 支持多种消息发送模式：自动路由、指定连接、目标选择
-*   **双工通信:** 完整支持标准消息和自定义消息的双向传输
-*   **SSL/TLS 支持:** 内置安全连接支持，支持自签名和CA签名证书
-*   **高性能异步架构:** 基于事件循环的双事件循环设计，支持高并发
-
-### Legacy API (向后兼容)
+### Legacy API (经典版本，向后兼容)
 
 *   **标准化消息结构:** 定义了 `MessageBase` 作为统一的消息载体，使用 `Seg` (Segment) 来表示不同类型的消息内容（文本、图片、表情、@、回复等），支持嵌套和组合。
 *   **WebSocket 通信:** 提供基于 WebSocket 的 `Router`、`MessageClient` 和 `MessageServer` 类，用于建立组件间的双向通信连接。
@@ -100,59 +101,6 @@ pip install -e .
     *   **`MessageClient`**: (由 `Router` 内部管理) 用于创建到 WebSocket 服务器的单个连接。
 
 ## 快速开始
-
-### API-Server Version 快速上手 (推荐)
-
-#### 服务端
-```python
-from maim_message.server import WebSocketServer, create_server_config
-
-# 创建配置
-config = create_server_config(
-    host="localhost",
-    port=18040,
-    path="/ws"
-)
-
-# 创建并启动服务器
-server = WebSocketServer(config)
-await server.start()
-
-# 发送消息（从消息中自动获取路由信息）
-results = await server.send_message(message)
-```
-
-#### 客户端 - 多连接模式
-```python
-from maim_message.client import WebSocketClient, create_client_config
-from maim_message.message import APIMessageBase
-
-# 创建客户端
-client = WebSocketClient(create_client_config(
-    "ws://localhost:18040/ws", "main_key", "main_platform"
-))
-await client.start()
-
-# 添加多个平台连接
-wechat_conn = await client.add_connection("ws://localhost:18040/ws", "wechat_key", "wechat")
-qq_conn = await client.add_connection("ws://localhost:18040/ws", "qq_key", "qq")
-
-# 连接所有平台
-await client.connect_to(wechat_conn)
-await client.connect_to(qq_conn)
-
-# 智能路由发送（自动选择连接）
-# message_dim.api_key 和 message_dim.platform 指定目标接收者
-await client.send_message(message)  # 自动根据目标接收者选择连接
-
-# 发送自定义消息（通过主连接发送）
-await client.send_custom_message("notification", {"data": "payload"})
-```
-
-#### 完整文档
-- 📖 **[API-Server 使用指南](./doc/api_server_usage_guide.md)** - 详细的使用文档和示例
-- 🔌 **[外部客户端通信指南](./doc/external_client_communication_guide.md)** - 非maim_message客户端集成指南
-- 💻 **[示例代码](./examples/)** - 完整的使用示例
 
 ### Legacy API 快速上手
 

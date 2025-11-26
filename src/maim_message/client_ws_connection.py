@@ -200,6 +200,17 @@ class ClientNetworkDriver:
                 )
                 self.connection_tasks[connection_uuid] = task
 
+                # 添加任务异常处理
+                def task_done_callback(fut):
+                    if fut.exception():
+                        logger.error(f"❌ 连接任务 {connection_uuid} 异常: {fut.exception()}")
+                        import traceback
+                        logger.error(f"连接任务错误详情: {traceback.format_exc()}")
+                    else:
+                        logger.info(f"✅ 连接任务 {connection_uuid} 正常结束")
+
+                task.add_done_callback(task_done_callback)
+
         return True
 
     async def disconnect(self, connection_uuid: str) -> bool:
@@ -208,34 +219,55 @@ class ClientNetworkDriver:
             logger.warning(f"Connection {connection_uuid} not found")
             return False
 
-        # 停止连接任务
-        if connection_uuid in self.connection_tasks:
-            if self.connection_tasks[connection_uuid] and not self.connection_tasks[connection_uuid].done():
-                self.connection_tasks[connection_uuid].cancel()
+        # 根据官方建议：使用最安全的关闭方式
+        try:
+            # 1. 首先停止连接任务
+            if connection_uuid in self.connection_tasks:
+                task = self.connection_tasks[connection_uuid]
+                if task and not task.done():
+                    # 安全地取消任务，不等待（根据官方文档建议）
+                    task.cancel()
+                    logger.debug(f"Cancelled task for {connection_uuid}")
+                del self.connection_tasks[connection_uuid]
+
+            # 2. 清理连接状态（不等待实际的WebSocket关闭）
+            # 这是基于官方文档和websockets库的内部实现
+            if connection_uuid in self.active_connections:
                 try:
-                    await self.connection_tasks[connection_uuid]
-                except asyncio.CancelledError:
-                    pass
-            del self.connection_tasks[connection_uuid]
+                    # 标记连接为关闭状态
+                    self.connection_states[connection_uuid] = "disconnected"
+                    # 根据官方建议，直接清理连接映射，让底层库处理实际关闭
+                    del self.active_connections[connection_uuid]
+                    logger.info(f"Removed connection {connection_uuid} from active connections")
+                except Exception as e:
+                    logger.debug(f"Error removing connection {connection_uuid}: {e}")
+                    # 确保无论如何都清理状态
+                    if connection_uuid in self.active_connections:
+                        del self.active_connections[connection_uuid]
 
-        # 断开WebSocket连接
-        if connection_uuid in self.active_connections:
-            websocket = self.active_connections[connection_uuid]
+            return True
+
+        except Exception as e:
+            # 记录错误但继续清理流程
+            logger.warning(f"Error during disconnect {connection_uuid}: {type(e).__name__}: {str(e)}")
+            # 确保状态清理
             try:
-                await websocket.close()
-                logger.info(f"Disconnected {connection_uuid}")
-            except Exception as e:
-                logger.warning(f"Error disconnecting {connection_uuid}: {e}")
-            finally:
-                del self.active_connections[connection_uuid]
-
-        self.connection_states[connection_uuid] = "disconnected"
-        return True
+                if connection_uuid in self.active_connections:
+                    del self.active_connections[connection_uuid]
+                if connection_uuid in self.connection_tasks:
+                    del self.connection_tasks[connection_uuid]
+                self.connection_states[connection_uuid] = "disconnected"
+            except Exception:
+                pass
+            return True
 
     async def _connection_loop(self, connection_uuid: str) -> None:
         """单个连接的管理循环"""
+        logger.info(f"🔄 开始连接循环: {connection_uuid}")
+        logger.info(f"📋 连接前置条件: running={self.running}, connection_exists={connection_uuid in self.connections}, shutdown_not_set={not self._shutdown_event.is_set()}")
         config = self.connections[connection_uuid]
         reconnect_delay = config.reconnect_delay
+        logger.info(f"📋 连接配置: url={config.url}, api_key={config.api_key}, platform={config.platform}")
         reconnect_attempts = 0
 
         while self.running and connection_uuid in self.connections and not self._shutdown_event.is_set():
@@ -308,52 +340,39 @@ class ClientNetworkDriver:
                         await self._handle_message(connection_uuid, message)
 
             except ConnectionClosedError as e:
-                logger.info(f"🔌 连接 {connection_uuid} 已关闭: {e}")
-                logger.info(f"📊 连接统计: 当前尝试={reconnect_attempts}, 最大尝试={config.max_reconnect_attempts}")
+                if self.running:
+                    logger.info(f"🔌 连接 {connection_uuid} 已关闭: {e}")
+                    logger.info(f"📊 连接统计: 当前尝试={reconnect_attempts}, 最大尝试={config.max_reconnect_attempts}")
+                else:
+                    logger.debug(f"🔌 连接 {connection_uuid} 已关闭 (shutdown): {e}")
             except Exception as e:
-                logger.info(f"❌ 连接异常 {connection_uuid}: {type(e).__name__}: {e}")
-                logger.info(f"📋 连接详细信息 {connection_uuid}:")
-                logger.info(f"  - 目标URL: {config.url}")
-                logger.info(f"  - 当前尝试: {reconnect_attempts}")
-                logger.info(f"  - 最大尝试: {config.max_reconnect_attempts}")
-                logger.info(f"  - SSL启用: {config.ssl_enabled}")
-                logger.info(f"  - 连接状态: {self.connection_states.get(connection_uuid, 'unknown')}")
-                logger.info(f"  - 运行状态: {self.running}")
-                logger.info(f"  - 关闭事件状态: {self._shutdown_event.is_set()}")
-
-                # 检查特定错误类型
-                if "Connection refused" in str(e):
-                    logger.info(f"🔍 检测到连接被拒绝错误 - 服务器可能未运行")
-                elif "timeout" in str(e).lower():
-                    logger.info(f"🔍 检测到超时错误 - 网络问题或服务器响应慢")
-                elif "SSL" in str(e) or "TLS" in str(e):
-                    logger.info(f"🔍 检测到SSL/TLS错误 - 证书或协议问题")
+                # 只在关闭过程中记录这些信息，避免在正常运行时产生过多日志
+                if not self.running or self._shutdown_event.is_set():
+                    logger.debug(f"❌ 连接异常 {connection_uuid}: {type(e).__name__}: {e}")
+                    # 不记录详细连接信息以减少日志噪音
 
                 self.stats["reconnect_attempts"] += 1
-                await self._send_event(EventType.DISCONNECT, connection_uuid, error=str(e))
+
+                # 安全地发送断开事件
+                try:
+                    await self._send_event(EventType.DISCONNECT, connection_uuid, error=str(e))
+                except Exception as event_error:
+                    logger.debug(f"Error sending disconnect event {connection_uuid}: {event_error}")
 
             finally:
                 # 清理连接状态
-                logger.info(f"🧹 开始清理连接 {connection_uuid} 的状态")
+                logger.debug(f"🧹 开始清理连接 {connection_uuid} 的状态")
                 if connection_uuid in self.active_connections:
                     del self.active_connections[connection_uuid]
-                    logger.info(f"✅ 已从活跃连接中移除 {connection_uuid}")
                 self.stats["current_connections"] -= 1
                 self.connection_states[connection_uuid] = "disconnected"
-                logger.info(f"📊 连接状态已更新为: disconnected, 当前连接数: {self.stats['current_connections']}")
+                logger.debug(f"📊 连接状态已更新为: disconnected, 当前连接数: {self.stats['current_connections']}")
 
             # 重连逻辑 - 检查是否收到关闭信号
             should_reconnect = (self.running and
                 connection_uuid in self.connections and
                 reconnect_attempts < config.max_reconnect_attempts and
                 not self._shutdown_event.is_set())
-
-            logger.info(f"🔄 重连检查 {connection_uuid}:")
-            logger.info(f"  - 运行状态: {self.running}")
-            logger.info(f"  - 连接存在: {connection_uuid in self.connections}")
-            logger.info(f"  - 重连尝试: {reconnect_attempts}/{config.max_reconnect_attempts}")
-            logger.info(f"  - 关闭信号: {self._shutdown_event.is_set()}")
-            logger.info(f"  - 应该重连: {should_reconnect}")
 
             if should_reconnect:
                 reconnect_attempts += 1
@@ -559,16 +578,27 @@ class ClientNetworkDriver:
             except asyncio.CancelledError:
                 break
 
-    async def start(self, event_queue: asyncio.Queue) -> None:
+    def set_event_queue(self, event_queue: asyncio.Queue) -> None:
+        """设置事件队列"""
+        self.event_queue = event_queue
+
+    async def start(self, event_queue: Optional[asyncio.Queue] = None) -> None:
         """启动网络驱动器"""
         if self.running:
             logger.warning("Network driver already running")
             return
 
+        # 设置事件队列
+        if event_queue:
+            self.event_queue = event_queue
+
+        if not self.event_queue:
+            raise ValueError("Event queue is required")
+
         # 启动工作线程
         self.worker_thread = threading.Thread(
             target=self._worker_loop_run,
-            args=(event_queue,),
+            args=(self.event_queue,),
             daemon=True
         )
         self.worker_thread.start()
@@ -579,50 +609,50 @@ class ClientNetworkDriver:
         logger.info("Client network driver started")
 
     async def stop(self) -> None:
-        """停止网络驱动器"""
+        """停止网络驱动器 - 完全清理所有协程"""
         if not self.running:
             return
 
         logger.info("Stopping client network driver...")
 
-        # 首先发送关闭信号
+        # 1. 首先发送关闭信号
         self._shutdown_event.set()
         self.running = False
 
-        # 优雅断开所有连接
-        for connection_uuid in list(self.active_connections.keys()):
-            try:
-                websocket = self.active_connections[connection_uuid]
-                await websocket.close(code=1000, reason="Graceful shutdown")
-            except Exception as e:
-                logger.debug(f"Error closing connection {connection_uuid}: {e}")
-
-        self.active_connections.clear()
-
-        # 优雅停止所有连接任务
+        # 2. 取消所有连接协程
         for connection_uuid, task in list(self.connection_tasks.items()):
             if task and not task.done():
                 try:
-                    # 等待任务优雅完成
-                    await asyncio.wait_for(task, timeout=3.0)
-                except asyncio.TimeoutError:
-                    logger.info(f"Task timeout for {connection_uuid}, cancelling")
                     task.cancel()
+                    logger.debug(f"Cancelled task {connection_uuid}")
+                    # 等待任务完全结束，但设置超时
                     try:
-                        await task
-                    except asyncio.CancelledError:
+                        await asyncio.wait_for(task, timeout=1.0)
+                    except (asyncio.CancelledError, asyncio.TimeoutError):
                         pass
                 except Exception as e:
-                    logger.debug(f"Error stopping task {connection_uuid}: {e}")
+                    logger.debug(f"Error cancelling task {connection_uuid}: {e}")
 
+        # 3. 清理所有连接状态
+        self.active_connections.clear()
         self.connection_tasks.clear()
-
-        # 清理连接状态
         self.connection_states.clear()
         self.connections.clear()
 
-        # 等待工作线程结束
+        # 4. 等待工作线程结束
         if self.worker_thread and self.worker_thread.is_alive():
-            self.worker_thread.join(timeout=5.0)
+            self.worker_thread.join(timeout=3.0)
+            if self.worker_thread.is_alive():
+                logger.warning("Worker thread did not stop gracefully")
 
-        logger.info("Client network driver stopped gracefully")
+        # 5. 重置统计信息
+        self.stats = {
+            "total_connections": 0,
+            "current_connections": 0,
+            "messages_received": 0,
+            "messages_sent": 0,
+            "bytes_received": 0,
+            "bytes_sent": 0
+        }
+
+        logger.info("Client network driver stopped completely")

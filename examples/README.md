@@ -19,6 +19,7 @@ API-Server Version 现在支持：
 - **`quick_start.py`** - 快速入门示例，演示基本的导入方式和用法
 - **`external_library_example.py`** - 完整的聊天应用示例，展示高级功能
 - **`multi_connection_client.py`** - 多连接客户端示例，演示智能路由和连接管理
+- **`new_client_examples.py`** - 新客户端使用示例，演示WebSocketClient单连接和WebSocketMultiClient多连接客户端
 
 ### 测试文件
 - **`../others/test_external_library_import.py`** - 外部库导入集成测试
@@ -51,7 +52,8 @@ print("✅ 导入成功!")
 # API-Server Version 组件 - 从子模块导入
 from maim_message.message import APIMessageBase, MessageDim, BaseMessageInfo, Seg
 from maim_message.server import WebSocketServer, ServerConfig, create_server_config
-from maim_message.client import WebSocketClient, ClientConfig, create_client_config
+from maim_message.client import WebSocketClient, WebSocketMultiClient, ClientConfig
+from maim_message.client_factory import create_client_config, create_ssl_client_config
 
 # Legacy 组件 - 从根模块导入（向后兼容）
 from maim_message import MessageBase, Seg, GroupInfo, UserInfo, MessageClient, MessageServer
@@ -136,7 +138,8 @@ API-Server Version (推荐使用)
 │   ├── WebSocketServer
 │   └── ServerConfig
 └── 客户端: maim_message.client
-    ├── WebSocketClient
+    ├── WebSocketClient      # 单连接客户端
+    ├── WebSocketMultiClient # 多连接客户端
     └── ClientConfig
 ```
 
@@ -157,7 +160,7 @@ from maim_message import MessageBase, Router
 # 4. API-Server Version组件
 from maim_message.message import APIMessageBase, BaseMessageInfo, Seg, MessageDim
 from maim_message.server import WebSocketServer, create_server_config
-from maim_message.client import WebSocketClient, create_client_config
+from maim_message.client_factory import create_client_config, create_ssl_client_config
 ```
 
 ### 2. 配置管理

@@ -22,6 +22,7 @@ from .message_base import (
 # 消息相关组件 - 使用 from maim_message.message import
 # WebSocket服务端组件 - 使用 from maim_message.server import
 # WebSocket客户端组件 - 使用 from maim_message.client import
+# 新的专用客户端 - 使用 from maim_message.simple_client import 和 from maim_message.multi_client import
 
 __all__ = [
     # Legacy API Components (从根模块导入)

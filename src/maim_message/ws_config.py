@@ -47,8 +47,6 @@ class ServerConfig(ConfigValidator):
     on_auth: Optional[Callable[[Dict[str, Any]], bool]] = None
     on_auth_extract_user: Optional[Callable[[Dict[str, Any]], str]] = None
     on_message: Optional[Callable[[APIMessageBase, Dict[str, Any]], None]] = None
-    on_connect: Optional[Callable[[str, Dict[str, Any]], None]] = None
-    on_disconnect: Optional[Callable[[str, Dict[str, Any]], None]] = None
 
     # 自定义消息处理器
     custom_handlers: Dict[str, Callable[[Dict[str, Any]], None]] = field(default_factory=dict)
@@ -74,33 +72,25 @@ class ServerConfig(ConfigValidator):
         """获取缺失的必填字段"""
         missing = set()
 
-        # on_auth_extract_user是必须的，因为需要将api_key转换为user_id
-        if self.on_auth_extract_user is None:
-            missing.add("on_auth_extract_user")
+        # 现在所有回调都有默认值，所以没有必填字段
+        # 如果需要，可以根据业务需求添加必填字段验证
 
         return missing
 
     def get_default_auth_handler(self) -> Callable[[Dict[str, Any]], bool]:
         """获取默认认证处理器"""
         async def default_auth(metadata: Dict[str, Any]) -> bool:
-            """默认认证：只要有api_key就通过"""
-            api_key = metadata.get("api_key", "")
-            if api_key:
-                logger.info(f"默认认证通过: {api_key}")
-                return True
-            else:
-                logger.warning(f"默认认证失败: 缺少api_key")
-                return False
+            """默认认证：总是通过，无需API Key验证"""
+            logger.info("默认认证通过：无需API Key验证")
+            return True
         return default_auth
 
     def get_default_user_extractor(self) -> Callable[[Dict[str, Any]], str]:
         """获取默认用户标识提取器"""
         def default_extract_user(metadata: Dict[str, Any]) -> str:
-            """默认用户标识提取：直接使用api_key作为user_id"""
-            api_key = metadata.get("api_key", "")
-            if not api_key:
-                raise ValueError("无法提取用户标识：缺少api_key")
-            return api_key
+            """默认用户标识提取：所有用户都使用默认用户标识"""
+            logger.debug("默认用户标识提取：使用系统默认用户")
+            return "sys_default"
         return default_extract_user
 
     def get_default_message_handler(self) -> Callable[[APIMessageBase, Dict[str, Any]], None]:
@@ -112,22 +102,7 @@ class ServerConfig(ConfigValidator):
                            f"from {message.get_api_key()}")
         return default_message_handler
 
-    def get_default_connect_handler(self) -> Callable[[str, Dict[str, Any]], None]:
-        """获取默认连接处理器"""
-        async def default_connect_handler(connection_uuid: str, metadata: Dict[str, Any]) -> None:
-            """默认连接处理器：记录连接"""
-            if self.enable_connection_log:
-                logger.info(f"客户端连接: {connection_uuid} from {metadata.get('platform', 'unknown')}")
-        return default_connect_handler
-
-    def get_default_disconnect_handler(self) -> Callable[[str, Dict[str, Any]], None]:
-        """获取默认断连处理器"""
-        async def default_disconnect_handler(connection_uuid: str, metadata: Dict[str, Any]) -> None:
-            """默认断连处理器：记录断连"""
-            if self.enable_connection_log:
-                logger.info(f"客户端断开: {connection_uuid}")
-        return default_disconnect_handler
-
+    
     def ensure_defaults(self) -> None:
         """确保所有必填的回调都有默认值"""
         if self.on_auth is None:
@@ -141,14 +116,6 @@ class ServerConfig(ConfigValidator):
         if self.on_message is None:
             self.on_message = self.get_default_message_handler()
             logger.info("使用默认消息处理器")
-
-        if self.on_connect is None:
-            self.on_connect = self.get_default_connect_handler()
-            logger.info("使用默认连接处理器")
-
-        if self.on_disconnect is None:
-            self.on_disconnect = self.get_default_disconnect_handler()
-            logger.info("使用默认断连处理器")
 
     def register_custom_handler(self, message_type: str, handler: Callable[[Dict[str, Any]], None]) -> None:
         """注册自定义消息处理器"""
@@ -195,8 +162,6 @@ class ClientConfig(ConfigValidator):
     close_timeout: int = 10
 
     # 回调函数配置
-    on_connect: Optional[Callable[[str, Dict[str, Any]], None]] = None
-    on_disconnect: Optional[Callable[[str, Optional[str]], None]] = None
     on_message: Optional[Callable[[APIMessageBase, Dict[str, Any]], None]] = None
 
     # 自定义消息处理器
@@ -239,25 +204,7 @@ class ClientConfig(ConfigValidator):
 
         return missing
 
-    def get_default_connect_handler(self) -> Callable[[str, Dict[str, Any]], None]:
-        """获取默认连接处理器"""
-        async def default_connect_handler(connection_uuid: str, config: Dict[str, Any]) -> None:
-            """默认连接处理器：记录连接"""
-            if self.enable_connection_log:
-                logger.info(f"已连接到服务器: {self.url} ({connection_uuid})")
-        return default_connect_handler
-
-    def get_default_disconnect_handler(self) -> Callable[[str, Optional[str]], None]:
-        """获取默认断连处理器"""
-        async def default_disconnect_handler(connection_uuid: str, error: Optional[str]) -> None:
-            """默认断连处理器：记录断连"""
-            if self.enable_connection_log:
-                if error:
-                    logger.warning(f"与服务器断开连接: {connection_uuid} - {error}")
-                else:
-                    logger.info(f"与服务器断开连接: {connection_uuid}")
-        return default_disconnect_handler
-
+    
     def get_default_message_handler(self) -> Callable[[APIMessageBase, Dict[str, Any]], None]:
         """获取默认消息处理器"""
         async def default_message_handler(message: APIMessageBase, metadata: Dict[str, Any]) -> None:
@@ -268,14 +215,6 @@ class ClientConfig(ConfigValidator):
 
     def ensure_defaults(self) -> None:
         """确保所有必填的回调都有默认值"""
-        if self.on_connect is None:
-            self.on_connect = self.get_default_connect_handler()
-            logger.info("使用默认连接处理器")
-
-        if self.on_disconnect is None:
-            self.on_disconnect = self.get_default_disconnect_handler()
-            logger.info("使用默认断连处理器")
-
         if self.on_message is None:
             self.on_message = self.get_default_message_handler()
             logger.info("使用默认消息处理器")
@@ -412,14 +351,17 @@ def create_server_config(**kwargs) -> ServerConfig:
         ssl_keyfile: SSL私钥文件路径 (ssl_enabled=True时必填)
         ssl_ca_certs: CA证书文件路径 (可选)
         ssl_verify: 是否验证客户端证书 (默认: False)
-        on_auth_extract_user: 用户标识提取回调 (必填)
-        ...其他回调函数
+
+        # 重要的回调配置
+        on_auth: API Key认证回调函数 (签名为: async def(metadata: Dict[str, Any]) -> bool)
+        on_auth_extract_user: 用户标识提取回调函数 (签名为: async def(metadata: Dict[str, Any]) -> str)
+        on_message: 消息处理回调函数 (签名为: async def(message: APIMessageBase, metadata: Dict[str, Any]) -> None)
 
     Returns:
         ServerConfig: 服务端配置对象
 
     Example:
-        # HTTP服务器
+        # 基本配置（使用默认回调）
         config = create_server_config(host="localhost", port=18040)
 
         # HTTPS服务器
@@ -429,6 +371,15 @@ def create_server_config(**kwargs) -> ServerConfig:
             ssl_enabled=True,
             ssl_certfile="/path/to/cert.pem",
             ssl_keyfile="/path/to/key.pem"
+        )
+
+        # 自定义回调配置
+        config = create_server_config(
+            host="localhost",
+            port=18040,
+            on_auth=lambda metadata: metadata.get("api_key") == "valid_key",
+            on_auth_extract_user=lambda metadata: metadata["api_key"],
+            on_message=lambda message, metadata: print(f"收到消息: {message.message_segment}")
         )
     """
     return ServerConfig(**kwargs)
@@ -447,23 +398,44 @@ def create_client_config(url: str, api_key: str, **kwargs) -> ClientConfig:
         ssl_certfile: 客户端证书文件路径 (可选)
         ssl_keyfile: 客户端私钥文件路径 (可选)
         ssl_check_hostname: 是否检查主机名 (默认: True)
-        ...其他配置
+
+        # 重要的回调配置
+        on_message: 消息处理回调函数 (签名为: async def(message: APIMessageBase, metadata: Dict[str, Any]) -> None)
+
+        ...其他配置参数，包括：
+        - auto_reconnect: 是否自动重连 (默认: True)
+        - max_reconnect_attempts: 最大重连次数 (默认: 5)
+        - reconnect_delay: 重连延迟 (默认: 1.0)
+        - ping_interval: ping间隔 (默认: 20)
+        - ping_timeout: ping超时 (默认: 10)
+        - enable_stats: 是否启用统计 (默认: True)
+        - log_level: 日志级别 (默认: "INFO")
 
     Returns:
         ClientConfig: 客户端配置对象
 
     Example:
-        # HTTP客户端
+        # 基本配置（使用默认回调）
         config = create_client_config(
             url="ws://localhost:18040/ws",
-            api_key="your_api_key"
+            api_key="your_api_key",
+            platform="test"
+        )
+
+        # 自定义消息处理回调
+        config = create_client_config(
+            url="ws://localhost:18040/ws",
+            api_key="your_api_key",
+            platform="test",
+            on_message=lambda message, metadata: print(f"收到消息: {message.message_segment.data}")
         )
 
         # HTTPS客户端
         config = create_client_config(
             url="wss://localhost:18044/ws",
             api_key="your_api_key",
-            ssl_ca_certs="/path/to/ca.pem"
+            ssl_ca_certs="/path/to/ca.pem",
+            on_message=message_handler
         )
     """
     # 自动检测SSL
@@ -487,7 +459,10 @@ def create_ssl_server_config(
         port: 监听端口
         ssl_certfile: SSL证书文件路径
         ssl_keyfile: SSL私钥文件路径
-        **kwargs: 其他ServerConfig参数
+        **kwargs: 其他ServerConfig参数，包括重要回调：
+            - on_auth: API Key认证回调函数
+            - on_auth_extract_user: 用户标识提取回调函数
+            - on_message: 消息处理回调函数
 
     Returns:
         ServerConfig: 配置了SSL的服务端配置
@@ -497,7 +472,9 @@ def create_ssl_server_config(
             host="localhost",
             port=18044,
             ssl_certfile="/path/to/cert.pem",
-            ssl_keyfile="/path/to/key.pem"
+            ssl_keyfile="/path/to/key.pem",
+            on_auth=lambda metadata: metadata.get("api_key") == "valid_key",
+            on_auth_extract_user=lambda metadata: metadata["api_key"]
         )
     """
     kwargs.update({
@@ -525,19 +502,44 @@ def create_ssl_client_config(
         url: 完整的WebSocket URL (如果提供，会忽略其他参数)
         host: 服务器主机名
         port: 服务器端口
-        api_key: API密钥
+        api_key: API密钥 (必填)
         path: WebSocket路径
         ssl_ca_certs: CA证书文件路径
-        **kwargs: 其他ClientConfig参数
+        **kwargs: 其他ClientConfig参数，包括重要回调：
+            - on_message: 消息处理回调函数 (签名为: async def(message: APIMessageBase, metadata: Dict[str, Any]) -> None)
+            - platform: 平台标识 (默认: "default")
+            - auto_reconnect: 是否自动重连 (默认: True)
+            - max_reconnect_attempts: 最大重连次数 (默认: 5)
+            - 其他配置参数...
 
     Returns:
         ClientConfig: 配置了SSL的客户端配置
 
     Example:
+        # 基本SSL客户端配置（使用默认回调）
         config = create_ssl_client_config(
             url="wss://localhost:18044/ws",
             api_key="your_api_key",
             ssl_ca_certs="/path/to/ca.pem"
+        )
+
+        # 自定义消息处理回调的SSL客户端
+        config = create_ssl_client_config(
+            url="wss://localhost:18044/ws",
+            api_key="your_api_key",
+            ssl_ca_certs="/path/to/ca.pem",
+            platform="secure_platform",
+            on_message=lambda message, metadata: print(f"安全消息: {message.message_segment.data}")
+        )
+
+        # 使用主机名和端口构建
+        config = create_ssl_client_config(
+            host="secure.example.com",
+            port=443,
+            api_key="your_api_key",
+            path="/websocket",
+            ssl_ca_certs="/path/to/ca.pem",
+            on_message=message_handler
         )
     """
     if url is None:
@@ -552,3 +554,299 @@ def create_ssl_client_config(
         return create_client_config(url, api_key, **kwargs)
     else:
         raise ValueError("api_key is required for client configuration")
+
+
+@dataclass
+class ConnectionEntry:
+    """连接条目类 - 表示单个连接的配置"""
+
+    name: str
+    url: str
+    api_key: str
+    platform: str = "default"
+
+    # SSL配置
+    ssl_enabled: bool = False
+    ssl_verify: bool = True
+    ssl_ca_certs: Optional[str] = None
+    ssl_certfile: Optional[str] = None
+    ssl_keyfile: Optional[str] = None
+    ssl_check_hostname: bool = True
+
+    # 重连配置
+    max_reconnect_attempts: int = 5
+    reconnect_delay: float = 1.0
+
+    # 其他配置
+    headers: Dict[str, str] = field(default_factory=dict)
+
+    def to_kwargs(self) -> Dict[str, Any]:
+        """转换为register_connection所需的kwargs格式"""
+        return {
+            "ssl_enabled": self.ssl_enabled,
+            "ssl_verify": self.ssl_verify,
+            "ssl_ca_certs": self.ssl_ca_certs,
+            "ssl_certfile": self.ssl_certfile,
+            "ssl_keyfile": self.ssl_keyfile,
+            "ssl_check_hostname": self.ssl_check_hostname,
+            "max_reconnect_attempts": self.max_reconnect_attempts,
+            "reconnect_delay": self.reconnect_delay,
+            "headers": self.headers,
+        }
+
+
+@dataclass
+class MultiClientConfig(ConfigValidator):
+    """WebSocket 多连接客户端配置类"""
+
+    # 连接配置
+    connections: Dict[str, ConnectionEntry] = field(default_factory=dict)
+
+    # 回调函数配置 - 独立于单连接配置
+    on_message: Optional[Callable[[APIMessageBase, Dict[str, Any]], None]] = None
+
+    # 自定义消息处理器
+    custom_handlers: Dict[str, Callable[[Dict[str, Any]], None]] = field(default_factory=dict)
+
+    # 全局设置
+    auto_connect_on_start: bool = False  # 启动时是否自动连接所有注册的连接
+    connect_timeout: float = 10.0        # 连接超时时间
+
+    # 统计信息配置
+    enable_stats: bool = True
+    stats_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+
+    # 日志配置
+    log_level: str = "INFO"
+    enable_connection_log: bool = True
+    enable_message_log: bool = True
+
+    def validate(self) -> bool:
+        """验证配置是否有效"""
+        if not self.connections:
+            logger.warning("多连接客户端配置中没有注册任何连接")
+            return True  # 空配置是有效的，但会警告
+
+        # 验证每个连接配置
+        for name, conn in self.connections.items():
+            if not conn.url:
+                logger.error(f"连接 '{name}' 的URL不能为空")
+                return False
+            if not conn.api_key:
+                logger.error(f"连接 '{name}' 的API密钥不能为空")
+                return False
+            # 验证URL格式
+            if not (conn.url.startswith("ws://") or conn.url.startswith("wss://")):
+                logger.error(f"连接 '{name}' 的URL格式错误，必须以ws://或wss://开头")
+                return False
+
+        return True
+
+    def get_missing_fields(self) -> Set[str]:
+        """获取缺失的必填字段"""
+        return set()  # 多连接配置没有全局必填字段
+
+    def register_connection(self, name: str, url: str, api_key: str, platform: str = "default", **kwargs) -> None:
+        """注册连接配置（一步配置后继续添加）
+
+        Args:
+            name: 连接名称
+            url: WebSocket URL
+            api_key: API密钥
+            platform: 平台标识
+            **kwargs: 其他连接参数
+        """
+        connection = ConnectionEntry(
+            name=name,
+            url=url,
+            api_key=api_key,
+            platform=platform,
+            **kwargs
+        )
+        self.connections[name] = connection
+        logger.info(f"注册连接配置: {name} -> {url} (platform: {platform})")
+
+    def add_connection(self, name: str, url: str, api_key: str, platform: str = "default", **kwargs) -> None:
+        """添加连接配置（兼容方法，调用register_connection）"""
+        self.register_connection(name, url, api_key, platform, **kwargs)
+
+    def remove_connection(self, name: str) -> bool:
+        """移除连接配置"""
+        if name in self.connections:
+            del self.connections[name]
+            logger.info(f"移除连接配置: {name}")
+            return True
+        else:
+            logger.warning(f"连接配置 '{name}' 不存在")
+            return False
+
+    def get_connection(self, name: str) -> Optional[ConnectionEntry]:
+        """获取连接配置"""
+        return self.connections.get(name)
+
+    def list_connections(self) -> Dict[str, ConnectionEntry]:
+        """列出所有连接配置"""
+        return self.connections.copy()
+
+    def register_custom_handler(self, message_type: str, handler: Callable[[Dict[str, Any]], None]) -> None:
+        """注册自定义消息处理器"""
+        if not message_type.startswith("custom_"):
+            message_type = f"custom_{message_type}"
+        self.custom_handlers[message_type] = handler
+        logger.info(f"注册自定义处理器: {message_type}")
+
+    def unregister_custom_handler(self, message_type: str) -> None:
+        """注销自定义消息处理器"""
+        if not message_type.startswith("custom_"):
+            message_type = f"custom_{message_type}"
+        self.custom_handlers.pop(message_type, None)
+        logger.info(f"注销自定义处理器: {message_type}")
+
+    def ensure_defaults(self) -> None:
+        """确保所有必填的回调都有默认值"""
+        if self.on_message is None:
+            self.on_message = self.get_default_message_handler()
+            logger.info("使用默认消息处理器")
+
+    def get_default_message_handler(self) -> Callable[[APIMessageBase, Dict[str, Any]], None]:
+        """获取默认消息处理器"""
+        async def default_message_handler(message: APIMessageBase, metadata: Dict[str, Any]) -> None:
+            """默认消息处理器：记录消息"""
+            if self.enable_message_log:
+                logger.info(f"收到消息: {message.message_segment.data}")
+        return default_message_handler
+
+    def register_ssl_connection(self, name: str, url: str, api_key: str, platform: str = "default",
+                            ssl_ca_certs: Optional[str] = None, **kwargs) -> None:
+        """注册SSL连接配置的便捷方法"""
+        if url.startswith("wss://"):
+            ssl_kwargs = {
+                "ssl_enabled": True,
+                "ssl_ca_certs": ssl_ca_certs,
+                **kwargs
+            }
+        else:
+            # 自动转换为wss协议
+            url = url.replace("ws://", "wss://")
+            ssl_kwargs = {
+                "ssl_enabled": True,
+                "ssl_ca_certs": ssl_ca_certs,
+                **kwargs
+            }
+
+        self.register_connection(name, url, api_key, platform, **ssl_kwargs)
+        logger.info(f"注册SSL连接配置: {name} -> {url}")
+
+    def add_ssl_connection(self, name: str, url: str, api_key: str, platform: str = "default",
+                          ssl_ca_certs: Optional[str] = None, **kwargs) -> None:
+        """添加SSL连接配置（兼容方法，调用register_ssl_connection）"""
+        self.register_ssl_connection(name, url, api_key, platform, ssl_ca_certs, **kwargs)
+
+
+# 便捷函数
+def create_multi_client_config(**kwargs) -> MultiClientConfig:
+    """创建多连接客户端配置的便捷函数
+
+    Args:
+        auto_connect_on_start: 启动时是否自动连接所有注册的连接 (默认: False)
+        connect_timeout: 连接超时时间 (默认: 10.0)
+        enable_stats: 是否启用统计信息 (默认: True)
+        stats_callback: 统计信息回调函数
+        log_level: 日志级别 (默认: "INFO")
+        enable_connection_log: 是否启用连接日志 (默认: True)
+        enable_message_log: 是否启用消息日志 (默认: True)
+
+        # 重要的回调配置
+        on_message: 消息处理回调函数 (签名为: async def(message: APIMessageBase, metadata: Dict[str, Any]) -> None)
+
+    Returns:
+        MultiClientConfig: 多连接客户端配置对象
+
+    Example:
+        # 创建基本配置（使用默认回调）
+        config = create_multi_client_config(
+            auto_connect_on_start=True,
+            enable_stats=True
+        )
+
+        # 自定义消息处理回调
+        config = create_multi_client_config(
+            auto_connect_on_start=True,
+            on_message=lambda message, metadata: print(f"收到消息: {message.message_segment.data}")
+        )
+
+        # 添加连接
+        config.register_connection("wechat", "ws://localhost:18040/ws", "wechat_key", "wechat")
+        config.register_connection("qq", "ws://localhost:18040/ws", "qq_key", "qq")
+    """
+    config = MultiClientConfig(**kwargs)
+    config.ensure_defaults()  # 确保默认回调
+    return config
+
+
+def create_multi_client_config_with_connections(
+    connections: Dict[str, Dict[str, Any]],
+    **kwargs
+) -> MultiClientConfig:
+    """创建多连接客户端配置并批量添加连接的便捷函数
+
+    Args:
+        connections: 连接配置字典，格式为 {连接名: 连接配置}
+            连接配置格式: {
+                "url": "ws://localhost:18040/ws",
+                "api_key": "api_key",
+                "platform": "platform_name",  # 可选
+                "ssl_enabled": bool,          # 可选
+                "ssl_ca_certs": str,          # 可选
+                "max_reconnect_attempts": int, # 可选
+                ...其他连接参数
+            }
+        **kwargs: 其他MultiClientConfig参数，包括：
+            - auto_connect_on_start: 是否自动连接 (默认: False)
+            - on_message: 消息处理回调函数 (重要)
+            - enable_stats: 是否启用统计 (默认: True)
+            - 其他配置参数...
+
+    Returns:
+        MultiClientConfig: 多连接客户端配置对象
+
+    Example:
+        connections = {
+            "wechat": {
+                "url": "ws://localhost:18040/ws",
+                "api_key": "wechat_key",
+                "platform": "wechat"
+            },
+            "qq": {
+                "url": "wss://localhost:18044/ws",
+                "api_key": "qq_key",
+                "platform": "qq",
+                "ssl_ca_certs": "/path/to/ca.pem"
+            }
+        }
+
+        # 基本配置
+        config = create_multi_client_config_with_connections(
+            connections=connections,
+            auto_connect_on_start=True
+        )
+
+        # 自定义回调配置
+        config = create_multi_client_config_with_connections(
+            connections=connections,
+            auto_connect_on_start=True,
+            on_message=message_handler,
+            enable_stats=True
+        )
+    """
+    config = MultiClientConfig(**kwargs)
+
+    for name, conn_config in connections.items():
+        url = conn_config.pop("url")
+        api_key = conn_config.pop("api_key")
+        platform = conn_config.pop("platform", "default")
+
+        config.register_connection(name, url, api_key, platform, **conn_config)
+
+    config.ensure_defaults()  # 确保默认回调
+    return config
