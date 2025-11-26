@@ -11,6 +11,7 @@ API-Server版本提供多用户隔离、API Key认证等高级功能，适合需
 📖 **详细文档**:
 - [API-Server 使用指南](doc/api_server_usage_guide.md)
 - [API 接口参考](doc/api_interface_reference.md)
+- [外部客户端通信指南](doc/external_client_communication_guide.md) - 非maim_message客户端集成指南
 
 ---
 

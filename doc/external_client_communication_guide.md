@@ -73,7 +73,9 @@ x-platform: <平台标识符>
 
 ### 消息结构
 
-所有消息都必须是JSON格式，包含外层协议结构和内层业务数据：
+所有消息都必须是JSON格式，包含外层协议结构和内层业务数据。支持两种主要消息类型：
+
+### 1. 标准消息 (sys_std)
 
 ```json
 {
@@ -106,6 +108,27 @@ x-platform: <平台标识符>
       "api_key": "target_receiver_api_key",    # ⚠️ 目标接收者的API密钥
       "platform": "target_receiver_platform"  # ⚠️ 目标接收者的平台
     }
+  }
+}
+```
+
+### 2. ACK确认消息 (sys_ack)
+
+服务端和客户端会自动发送ACK确认消息来确认消息接收：
+
+```json
+{
+  "ver": 1,
+  "msg_id": "ACK消息的唯一标识符",
+  "type": "sys_ack",
+  "meta": {
+    "uuid": "连接UUID",
+    "acked_msg_id": "被确认的消息ID",
+    "timestamp": 1234567890.123
+  },
+  "payload": {
+    "status": "received",
+    "server_timestamp": 1234567890.123  // 或 "client_timestamp"
   }
 }
 ```
@@ -153,7 +176,14 @@ x-platform: <平台标识符>
 
 ## 消息类型
 
-### 支持的消息类型
+### 协议消息类型
+
+| 类型值 | 说明 | 发送方 | 接收方处理 |
+|--------|------|-------|------------|
+| `sys_std` | 标准业务消息 | 客户端/服务端 | 路由到业务处理器，自动回复ACK |
+| `sys_ack` | 消息确认应答 | 服务端/客户端 | 确认消息接收，无需回复ACK |
+
+### 业务消息类型 (message_segment.type)
 
 | 类型值 | 说明 | data字段格式 |
 |--------|------|-------------|
@@ -162,6 +192,63 @@ x-platform: <平台标识符>
 | `file` | 文件消息 | 文件URL或Base64 |
 | `at` | @消息 | JSON格式 |
 | `face` | 表情消息 | 表情标识符 |
+
+## ACK确认机制
+
+### 自动ACK规则
+
+1. **触发条件**: 接收到的消息包含`msg_id`字段且消息类型不是`sys_ack`
+2. **自动发送**: 服务端和客户端都会自动对符合条件的消息发送ACK确认
+3. **避免循环**: ACK消息本身不会触发新的ACK确认
+
+### ACK消息处理建议
+
+- **可靠性**: 客户端可以通过监听ACK消息确认消息已被服务端接收
+- **超时处理**: 如果发送消息后长时间未收到ACK，可以考虑重发
+- **消息去重**: 根据`acked_msg_id`字段识别重复的ACK消息
+- **统计监控**: 使用ACK机制统计消息成功率和网络质量
+
+## send_message返回值说明
+
+### 服务端send_message返回值
+
+当服务端调用`send_message`方法时，返回值为`Dict[str, bool]`格式：
+
+```python
+# 服务端返回示例
+{
+    "connection_uuid_1": True,    # 连接1发送成功
+    "connection_uuid_2": False,   # 连接2发送失败
+    "connection_uuid_3": True     # 连接3发送成功
+}
+```
+
+**返回值说明**：
+- **键(key)**: 连接UUID，标识特定的客户端连接
+- **值(value)**: 布尔值，表示该连接的发送结果
+  - `True`: 消息成功发送到该连接
+  - `False`: 消息发送失败（连接断开、网络错误等）
+
+### 客户端send_message返回值
+
+当客户端调用`send_message`方法时，返回值为`bool`类型：
+
+```python
+# 客户端返回示例
+True    # 发送成功
+False   # 发送失败
+```
+
+**返回值说明**：
+- `True`: 消息成功发送到服务端
+- `False`: 发送失败（连接断开、网络错误、格式错误等）
+
+### 返回值使用建议
+
+1. **服务端**: 根据返回的连接结果映射，可以了解哪些连接成功接收消息
+2. **客户端**: 根据布尔返回值，可以判断消息是否成功送达服务端
+3. **错误处理**: 结合ACK机制和返回值，实现更可靠的消息传输
+4. **重试策略**: 对于失败的发送，可以根据返回值决定是否重试
 
 ### 消息示例
 
@@ -300,9 +387,14 @@ async def custom_client():
         await websocket.send(json.dumps(message))
         print("消息已发送")
 
-        # 接收响应
+        # 接收响应（可能包含ACK确认）
         response = await websocket.recv()
-        print(f"收到响应: {response}")
+        response_data = json.loads(response)
+
+        if response_data.get("type") == "sys_ack":
+            print(f"收到ACK确认: {response_data['meta']['acked_msg_id']}")
+        else:
+            print(f"收到业务消息: {response}")
 
 if __name__ == "__main__":
     asyncio.run(custom_client())
@@ -329,7 +421,12 @@ class MaimMessageClient {
 
         this.ws.onmessage = (event) => {
             const message = JSON.parse(event.data);
-            console.log('收到消息:', message);
+
+            if (message.type === 'sys_ack') {
+                console.log('收到ACK确认:', message.meta.acked_msg_id);
+            } else {
+                console.log('收到业务消息:', message);
+            }
         };
 
         this.ws.onerror = (error) => {
@@ -819,6 +916,8 @@ except Exception as e:
 - 验证消息格式完整性
 - 处理大消息分片
 - 实现消息确认机制
+- 正确处理ACK确认消息，避免ACK消息循环
+- 基于ACK消息实现消息传输可靠性监控
 
 ### 3. 性能优化
 
