@@ -87,7 +87,7 @@ class ServerConfig(ConfigValidator):
 
     def get_default_user_extractor(self) -> Callable[[Dict[str, Any]], str]:
         """获取默认用户标识提取器"""
-        def default_extract_user(metadata: Dict[str, Any]) -> str:
+        async def default_extract_user(metadata: Dict[str, Any]) -> str:
             """默认用户标识提取：所有用户都使用默认用户标识"""
             logger.debug("默认用户标识提取：使用系统默认用户")
             return "sys_default"

@@ -143,6 +143,9 @@ class WebSocketClient(WebSocketClientBase):
             headers=self.config.headers,
             max_reconnect_attempts=self.config.max_reconnect_attempts,
             reconnect_delay=self.config.reconnect_delay,
+            ping_interval=self.config.ping_interval,
+            ping_timeout=self.config.ping_timeout,
+            close_timeout=self.config.close_timeout,
             # SSL配置
             ssl_enabled=self.config.ssl_enabled,
             ssl_verify=self.config.ssl_verify,

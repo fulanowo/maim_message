@@ -1,6 +1,7 @@
-# API-Server 测试说明
+# API-Server 版本测试说明 (test_api_server_complete.py)
 
-本目录包含了API-Server版本的完整测试文件。
+本目录包含了 API-Server 版本的完整测试文件 `test_api_server_complete.py`。
+此测试取代了旧的测试脚本，涵盖了完整的 API 服务器功能验证。
 
 ## 运行测试
 

@@ -107,6 +107,7 @@ class ClientNetworkDriver:
 
         # 跨线程通信
         self.event_queue: Optional[asyncio.Queue] = None
+        self.queue_loop: Optional[asyncio.AbstractEventLoop] = None
         self.main_loop: Optional[asyncio.AbstractEventLoop] = None
         self.worker_thread: Optional[threading.Thread] = None
         self.running = False
@@ -343,6 +344,8 @@ class ClientNetworkDriver:
                 if self.running:
                     logger.info(f"🔌 连接 {connection_uuid} 已关闭: {e}")
                     logger.info(f"📊 连接统计: 当前尝试={reconnect_attempts}, 最大尝试={config.max_reconnect_attempts}")
+                    # 关键修复: 发送断开事件
+                    await self._send_event(EventType.DISCONNECT, connection_uuid, error=str(e))
                 else:
                     logger.debug(f"🔌 连接 {connection_uuid} 已关闭 (shutdown): {e}")
             except Exception as e:
@@ -497,6 +500,15 @@ class ClientNetworkDriver:
 
     async def send_message(self, connection_uuid: str, message: Dict[str, Any]) -> bool:
         """发送消息到指定连接（业务层接口）"""
+        # 如果我们在不同的循环中，必须调度到工作循环
+        if self.main_loop and self.main_loop.is_running() and self.main_loop != asyncio.get_running_loop():
+            # 使用 run_coroutine_threadsafe 调度并通过 wrap_future 等待结果
+            future = asyncio.run_coroutine_threadsafe(
+                self._send_raw_message(connection_uuid, message), 
+                self.main_loop
+            )
+            return await asyncio.wrap_future(future)
+            
         return await self._send_raw_message(connection_uuid, message)
 
     async def _send_event(self, event_type: EventType, connection_uuid: str,
@@ -521,7 +533,15 @@ class ClientNetworkDriver:
             )
 
             # 直接发送事件到队列
-            await self.event_queue.put(event)
+            # 注意：这是跨线程操作！我们必须使用 queue_loop 的 call_soon_threadsafe
+            if self.queue_loop and self.queue_loop != asyncio.get_running_loop():
+                logger.debug(f"Cross-thread dispatch to loop {id(self.queue_loop)}")
+                self.queue_loop.call_soon_threadsafe(self.event_queue.put_nowait, event)
+            else:
+                # 如果我们在同一个循环中（或者没有捕获 loop），可以直接 put
+                logger.debug("Same-loop dispatch")
+                # 注意：put 是协程，会等待队列空闲。但在同一个Loop中是安全的。
+                await self.event_queue.put(event)
 
         except Exception as e:
             logger.error(f"Error sending event to business layer: {e}")
@@ -622,6 +642,14 @@ class ClientNetworkDriver:
     def set_event_queue(self, event_queue: asyncio.Queue) -> None:
         """设置事件队列"""
         self.event_queue = event_queue
+        # 捕获队列所属的事件循环
+        try:
+            self.queue_loop = asyncio.get_running_loop()
+            logger.info(f"Set event queue loop: {id(self.queue_loop)}")
+        except RuntimeError:
+            # 如果在非async环境调用(不太可能，除了测试)，尝试获取队列的循环
+            self.queue_loop = getattr(event_queue, '_loop', None)
+            logger.info(f"Set event queue loop from arg: {id(self.queue_loop) if self.queue_loop else 'None'}")
 
     async def start(self, event_queue: Optional[asyncio.Queue] = None) -> None:
         """启动网络驱动器"""

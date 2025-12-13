@@ -39,6 +39,7 @@ WebSocketServer(config: Optional[ServerConfig] = None)
 | `get_platform_connections(user_id: str, platform: str)` | `user_id`: 用户ID<br>`platform`: 平台标识 | `Set[str]`                 | 获取指定用户在指定平台的所有连接UUID |
 | `get_connection_info(connection_uuid: str)`             | `connection_uuid`: 连接UUID               | `Optional[Dict[str, str]]` | 获取连接对应的用户ID和平台信息       |
 | `get_connection_count()`                                | 无                                        | `int`                      | 获取当前连接数                       |
+| `get_coroutine_status()`                                | 无                                        | `Dict[str, Any]`           | 获取协程状态信息                     |
 
 #### 配置和处理器管理 (3个方法)
 
@@ -107,14 +108,15 @@ WebSocketClient(config: ClientConfig)
 
 #### 生命周期管理 (6个方法)
 
-| 方法             | 参数 | 返回值 | 说明                   |
-| ---------------- | ---- | ------ | ---------------------- |
-| `start()`        | 无   | `None` | 启动客户端             |
-| `stop()`         | 无   | `None` | 停止客户端             |
-| `connect()`      | 无   | `bool` | 连接到服务器           |
-| `disconnect()`   | 无   | `bool` | 断开与服务器的连接     |
-| `is_running()`   | 无   | `bool` | 检查客户端是否在运行   |
-| `is_connected()` | 无   | `bool` | 检查是否已连接到服务器 |
+| 方法                     | 参数 | 返回值           | 说明                   |
+| ------------------------ | ---- | ---------------- | ---------------------- |
+| `start()`                | 无   | `None`           | 启动客户端             |
+| `stop()`                 | 无   | `None`           | 停止客户端             |
+| `connect()`              | 无   | `bool`           | 连接到服务器           |
+| `disconnect()`           | 无   | `bool`           | 断开与服务器的连接     |
+| `is_running()`           | 无   | `bool`           | 检查客户端是否在运行   |
+| `is_connected()`         | 无   | `bool`           | 检查是否已连接到服务器 |
+| `get_coroutine_status()` | 无   | `Dict[str, Any]` | 获取协程状态信息       |
 
 #### 消息发送 (2个方法)
 
@@ -473,16 +475,17 @@ await client.stop()
 ## 接口统计总结
 
 ### 服务端 (WebSocketServer)
-- **公共方法总数**: 13个
+### 服务端 (WebSocketServer)
+- **公共方法总数**: 14个
 - **生命周期管理**: 2个 (start, stop)
 - **消息发送**: 2个 (send_message, send_custom_message)
 - **用户和连接管理**: 5个 (get_user_count, get_user_connections, get_platform_connections, get_connection_info, get_connection_count)
 - **配置和处理器管理**: 3个 (update_config, register_custom_handler, unregister_custom_handler)
-- **统计信息**: 1个 (get_stats)
+- **状态监控**: 2个 (get_stats, get_coroutine_status)
 
 ### 单连接客户端 (WebSocketClient)
-- **公共方法总数**: 15个
-- **生命周期管理**: 6个 (start, stop, connect, disconnect, is_running, is_connected)
+- **公共方法总数**: 16个
+- **生命周期管理**: 7个 (start, stop, connect, disconnect, is_running, is_connected, get_coroutine_status)
 - **消息发送**: 2个 (send_message, send_custom_message)
 - **配置和处理器管理**: 3个 (update_config, register_custom_handler, unregister_custom_handler)
 - **连接信息**: 3个 (get_cached_connection_info, get_connection_uuid, get_last_error)
