@@ -110,6 +110,7 @@ class WebSocketServer(BaseConnection, ServerConnectionInterface):
             if platform != "unknown":
                 previous = self.platform_websockets.get(platform)
                 if previous and previous is not websocket:
+                    logger.warning(f"检测到平台 {platform} 已有连接，正在关闭旧连接以接受新连接")
                     try:
                         await previous.close(code=1000, reason="新的连接已建立")
                     except Exception:
@@ -400,7 +401,7 @@ class WebSocketClient(BaseConnection, ClientConnectionInterface):
         self.ws_connected: bool = False
         self.session: Optional[aiohttp.ClientSession] = None
 
-        self.reconnect_interval: int = 1
+        self.reconnect_interval: int = 2
         self.retry_count: int = 0
 
         self.heartbeat_interval: int = 20
@@ -541,7 +542,7 @@ class WebSocketClient(BaseConnection, ClientConnectionInterface):
                     success = await self.connect()
                     if not success:
                         retry_delay = min(
-                            5, self.reconnect_interval * (2 ** min(self.retry_count, 5))
+                            10, self.reconnect_interval * (2 ** min(self.retry_count, 5))
                         )
                         logger.info(f"等待 {retry_delay} 秒后重试...")
                         await asyncio.sleep(retry_delay)
@@ -603,7 +604,7 @@ class WebSocketClient(BaseConnection, ClientConnectionInterface):
 
             if self._running and not self.ws_connected:
                 retry_delay = min(
-                    30, self.reconnect_interval * (2 ** min(self.retry_count, 5))
+                    10, self.reconnect_interval * (2 ** min(self.retry_count, 5))
                 )
                 logger.info(f"等待 {retry_delay} 秒后重试...")
                 await asyncio.sleep(retry_delay)

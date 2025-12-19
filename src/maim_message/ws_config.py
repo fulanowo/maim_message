@@ -153,8 +153,8 @@ class ClientConfig(ConfigValidator):
     # 重连配置
     auto_reconnect: bool = True
     max_reconnect_attempts: int = 5
-    reconnect_delay: float = 1.0
-    max_reconnect_delay: float = 30.0
+    reconnect_delay: float = 2.0
+    max_reconnect_delay: float = 10.0
 
     # 心跳配置
     ping_interval: int = 20
@@ -575,7 +575,7 @@ class ConnectionEntry:
 
     # 重连配置
     max_reconnect_attempts: int = 5
-    reconnect_delay: float = 1.0
+    reconnect_delay: float = 2.0
 
     # 其他配置
     headers: Dict[str, str] = field(default_factory=dict)

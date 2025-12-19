@@ -37,8 +37,8 @@ class ConnectionConfig:
     ping_timeout: int = 10
     close_timeout: int = 10
     max_reconnect_attempts: int = 5
-    reconnect_delay: float = 1.0
-    max_reconnect_delay: float = 30.0
+    reconnect_delay: float = 2.0
+    max_reconnect_delay: float = 10.0
 
     # SSL配置
     ssl_enabled: bool = False
