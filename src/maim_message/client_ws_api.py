@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from typing import Any, Callable, Dict, Optional
 
 from .client_base import WebSocketClientBase
@@ -131,7 +132,7 @@ class WebSocketClient(WebSocketClientBase):
 
         if not self._connection_uuid:
             # 生成连接UUID
-            self._connection_uuid = f"single_{int(time.time() * 1000)}"
+            self._connection_uuid = f"single_{uuid.uuid4().hex}"
             self.stats["connect_attempts"] += 1
 
         # 创建连接配置
