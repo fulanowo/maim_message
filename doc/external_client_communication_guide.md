@@ -73,14 +73,38 @@ x-platform: <平台标识符>
 
 ### 消息结构
 
-所有消息都必须是JSON格式，包含外层协议结构和内层业务数据。支持两种主要消息类型：
+所有消息都必须是JSON格式，包含**外层协议信封 (Envelope)** 和 **内层业务数据 (Payload)**。
 
-### 1. 标准消息 (sys_std)
+#### 外层信封结构 (Envelope)
 
 ```json
 {
+  "ver": 1,                          // 协议版本，当前为1
+  "msg_id": "消息一标识符",          // 客户端生成，用于追踪和ACK
+  "type": "sys_std",                 // 消息类型：sys_std (标准消息) 或 sys_ack (确认消息)
+  "meta": {                          // 元数据
+    "sender_user": "api_key_or_id",  // 发送者API Key或用户ID
+    "platform": "platform_name",     // 发送平台
+    "timestamp": 1234567890.123      // 发送时间戳
+  },
+  "payload": { ... }                 // 内层业务数据
+}
+```
+
+### 1. 标准消息 (sys_std)
+
+业务消息必须封装在 `sys_std` 类型的信封中。
+
+```json
+{
+  "ver": 1,
+  "msg_id": "msg_unique_id_123",
   "type": "sys_std",
-  "msg_id": "消息唯一标识符",
+  "meta": {
+    "sender_user": "your_api_key",
+    "platform": "your_platform",
+    "timestamp": 1703123456.789
+  },
   "payload": {
     "message_info": {
       "platform": "platform_name",
@@ -119,94 +143,70 @@ x-platform: <平台标识符>
 ```json
 {
   "ver": 1,
-  "msg_id": "ACK消息的唯一标识符",
+  "msg_id": "ack_unique_id_456",
   "type": "sys_ack",
   "meta": {
     "uuid": "连接UUID",
-    "acked_msg_id": "被确认的消息ID",
+    "acked_msg_id": "msg_unique_id_123",  # 被确认的消息ID
     "timestamp": 1234567890.123
   },
   "payload": {
     "status": "received",
-    "server_timestamp": 1234567890.123  // 或 "client_timestamp"
+    "server_timestamp": 1234567890.123
   }
 }
 ```
 
-### 必填字段说明
+### 字段说明
 
-#### 外层协议字段
+#### 外层信封字段
 
-| 字段路径 | 类型 | 必填 | 说明 |
-|---------|------|------|------|
-| `type` | string | ✅ | 消息类型，必须为 "sys_std" |
-| `msg_id` | string | ✅ | 消息唯一标识符，客户端生成 |
-| `payload` | object | ✅ | 内层业务数据对象 |
+| 字段      | 类型   | 必填 | 说明                              |
+| --------- | ------ | ---- | --------------------------------- |
+| `ver`     | int    | -    | 协议版本，建议为 1                |
+| `msg_id`  | string | ✅    | 消息唯一标识符，用于ACK确认       |
+| `type`    | string | ✅    | 必须为 `sys_std` (发送业务消息时) |
+| `meta`    | object | -    | 元数据，建议包含发送者信息        |
+| `payload` | object | ✅    | 内层业务数据对象                  |
 
 #### 内层业务字段 (payload中)
 
-| 字段路径 | 类型 | 必填 | 说明 |
-|---------|------|------|------|
-| `payload.message_info.platform` | string | ✅ | 平台标识符 |
-| `payload.message_info.message_id` | string | ✅ | 消息唯一ID |
-| `payload.message_info.time` | float | ✅ | Unix时间戳 |
-| `payload.message_segment.type` | string | ✅ | 消息类型 |
-| `payload.message_segment.data` | string | ✅ | 消息内容 |
-| `payload.message_dim.api_key` | string | ✅ | ⚠️ **目标接收者的API密钥**（用于服务端路由） |
-| `payload.message_dim.platform` | string | ✅ | ⚠️ **目标接收者的平台标识**（用于服务端路由） |
-
-| 字段路径 | 类型 | 必填 | 说明 |
-|---------|------|------|------|
-| `message_info.platform` | string | ✅ | 平台标识符 |
-| `message_info.message_id` | string | ✅ | 消息唯一ID |
-| `message_info.time` | float | ✅ | Unix时间戳 |
-| `message_segment.type` | string | ✅ | 消息类型 |
-| `message_segment.data` | string | ✅ | 消息内容 |
-| `message_dim.api_key` | string | ✅ | API密钥 |
-| `message_dim.platform` | string | ✅ | 平台标识符 |
-
-### 可选字段说明
-
-| 字段路径 | 类型 | 说明 |
-|---------|------|------|
-| `message_info.sender_info` | object | 发送者信息 |
-| `message_info.sender_info.user_info` | object | 用户信息 |
-| `message_info.sender_info.group_info` | object | 群组信息（群消息时） |
-| `message_info.format_info` | object | 消息格式信息 |
+| 字段路径                  | 类型   | 必填 | 说明                                         |
+| ------------------------- | ------ | ---- | -------------------------------------------- |
+| `message_info.platform`   | string | ✅    | 消息平台标识符                               |
+| `message_info.message_id` | string | ✅    | 业务层消息ID                                 |
+| `message_info.time`       | float  | ✅    | Unix时间戳                                   |
+| `message_segment.type`    | string | ✅    | 消息内容类型                                 |
+| `message_segment.data`    | string | ✅    | 消息内容                                     |
+| `message_dim.api_key`     | string | ✅    | ⚠️ **目标接收者的API密钥**（用于服务端路由）  |
+| `message_dim.platform`    | string | ✅    | ⚠️ **目标接收者的平台标识**（用于服务端路由） |
 
 ## 消息类型
 
-### 协议消息类型
+### 协议消息类型 (Envelope Type)
 
-| 类型值 | 说明 | 发送方 | 接收方处理 |
-|--------|------|-------|------------|
-| `sys_std` | 标准业务消息 | 客户端/服务端 | 路由到业务处理器，自动回复ACK |
-| `sys_ack` | 消息确认应答 | 服务端/客户端 | 确认消息接收，无需回复ACK |
+| 类型值    | 说明         | 发送方        | 接收方处理                               |
+| --------- | ------------ | ------------- | ---------------------------------------- |
+| `sys_std` | 标准业务消息 | 客户端/服务端 | 解析payload，路由到业务逻辑，自动回复ACK |
+| `sys_ack` | 消息确认应答 | 服务端/客户端 | 确认消息接收，无需回复ACK                |
 
-### 业务消息类型 (message_segment.type)
+### 业务消息类型 (payload.message_segment.type)
 
-| 类型值 | 说明 | data字段格式 |
-|--------|------|-------------|
-| `text` | 纯文本消息 | 字符串 |
-| `image` | 图片消息 | 图片URL或Base64 |
-| `file` | 文件消息 | 文件URL或Base64 |
-| `at` | @消息 | JSON格式 |
-| `face` | 表情消息 | 表情标识符 |
+| 类型值  | 说明       | data字段格式    |
+| ------- | ---------- | --------------- |
+| `text`  | 纯文本消息 | 字符串          |
+| `image` | 图片消息   | 图片URL或Base64 |
+| `file`  | 文件消息   | 文件URL或Base64 |
+| `at`    | @消息      | JSON格式        |
+| `face`  | 表情消息   | 表情标识符      |
 
 ## ACK确认机制
 
 ### 自动ACK规则
 
-1. **触发条件**: 接收到的消息包含`msg_id`字段且消息类型不是`sys_ack`
-2. **自动发送**: 服务端和客户端都会自动对符合条件的消息发送ACK确认
-3. **避免循环**: ACK消息本身不会触发新的ACK确认
-
-### ACK消息处理建议
-
-- **可靠性**: 客户端可以通过监听ACK消息确认消息已被服务端接收
-- **超时处理**: 如果发送消息后长时间未收到ACK，可以考虑重发
-- **消息去重**: 根据`acked_msg_id`字段识别重复的ACK消息
-- **统计监控**: 使用ACK机制统计消息成功率和网络质量
+1. **触发条件**: 接收到的消息包含`msg_id`字段且消息类型(type)不是`sys_ack`
+2. **自动发送**: 服务端会自动对接收到的消息发送`sys_ack`应答
+3. **客户端行为**: 建议客户端也对收到的服务端`sys_std`消息回复`sys_ack`
 
 ## send_message返回值说明
 
@@ -243,39 +243,42 @@ False   # 发送失败
 - `True`: 消息成功发送到服务端
 - `False`: 发送失败（连接断开、网络错误、格式错误等）
 
-### 返回值使用建议
-
-1. **服务端**: 根据返回的连接结果映射，可以了解哪些连接成功接收消息
-2. **客户端**: 根据布尔返回值，可以判断消息是否成功送达服务端
-3. **错误处理**: 结合ACK机制和返回值，实现更可靠的消息传输
-4. **重试策略**: 对于失败的发送，可以根据返回值决定是否重试
-
 ### 消息示例
 
 #### 文本消息
 
 ```json
 {
-  "message_info": {
+  "ver": 1,
+  "msg_id": "msg_001",
+  "type": "sys_std",
+  "meta": {
+    "sender_user": "your_api_key",
     "platform": "custom_client",
-    "message_id": "msg_001",
-    "time": 1703123456.789,
-    "sender_info": {
-      "user_info": {
-        "platform": "custom_client",
-        "user_id": "user_123",
-        "user_nickname": "测试用户",
-        "user_cardname": "测试名片"
+    "timestamp": 1703123456.789
+  },
+  "payload": {
+    "message_info": {
+      "platform": "custom_client",
+      "message_id": "msg_inner_001",
+      "time": 1703123456.789,
+      "sender_info": {
+        "user_info": {
+          "platform": "custom_client",
+          "user_id": "user_123",
+          "user_nickname": "测试用户",
+          "user_cardname": "测试名片"
+        }
       }
+    },
+    "message_segment": {
+      "type": "text",
+      "data": "Hello from custom client!"
+    },
+    "message_dim": {
+      "api_key": "target_receiver_api_key",
+      "platform": "target_receiver_platform"
     }
-  },
-  "message_segment": {
-    "type": "text",
-    "data": "Hello from custom client!"
-  },
-  "message_dim": {
-    "api_key": "your_api_key",
-    "platform": "custom_client"
   }
 }
 ```
@@ -284,18 +287,24 @@ False   # 发送失败
 
 ```json
 {
-  "message_info": {
-    "platform": "custom_client",
-    "message_id": "img_001",
-    "time": 1703123456.789
-  },
-  "message_segment": {
-    "type": "image",
-    "data": "https://example.com/image.jpg"
-  },
-  "message_dim": {
-    "api_key": "your_api_key",
-    "platform": "custom_client"
+  "ver": 1,
+  "msg_id": "msg_002",
+  "type": "sys_std",
+  "meta": { ... },
+  "payload": {
+    "message_info": {
+      "platform": "custom_client",
+      "message_id": "img_001",
+      "time": 1703123456.789
+    },
+    "message_segment": {
+      "type": "image",
+      "data": "https://example.com/image.jpg"
+    },
+    "message_dim": {
+      "api_key": "target_receiver_api_key",
+      "platform": "target_receiver_platform"
+    }
   }
 }
 ```
@@ -304,30 +313,36 @@ False   # 发送失败
 
 ```json
 {
-  "message_info": {
-    "platform": "custom_client",
-    "message_id": "group_msg_001",
-    "time": 1703123456.789,
-    "sender_info": {
-      "user_info": {
-        "platform": "custom_client",
-        "user_id": "user_123",
-        "user_nickname": "群成员"
-      },
-      "group_info": {
-        "platform": "custom_client",
-        "group_id": "group_456",
-        "group_name": "测试群组"
+  "ver": 1,
+  "msg_id": "msg_003",
+  "type": "sys_std",
+  "meta": { ... },
+  "payload": {
+    "message_info": {
+      "platform": "custom_client",
+      "message_id": "group_msg_001",
+      "time": 1703123456.789,
+      "sender_info": {
+        "user_info": {
+          "platform": "custom_client",
+          "user_id": "user_123",
+          "user_nickname": "群成员"
+        },
+        "group_info": {
+          "platform": "custom_client",
+          "group_id": "group_456",
+          "group_name": "测试群组"
+        }
       }
+    },
+    "message_segment": {
+      "type": "text",
+      "data": "群消息内容"
+    },
+    "message_dim": {
+      "api_key": "target_receiver_api_key",
+      "platform": "target_receiver_platform"
     }
-  },
-  "message_segment": {
-    "type": "text",
-    "data": "群消息内容"
-  },
-  "message_dim": {
-    "api_key": "your_api_key",
-    "platform": "custom_client"
   }
 }
 ```
@@ -358,8 +373,8 @@ async def custom_client():
         "x-uuid": str(uuid.uuid4())
     }
     async with websockets.connect(uri, extra_headers=headers) as websocket:
-        # 构造消息
-        message = {
+        # 构造业务消息(Payload)
+        payload = {
             "message_info": {
                 "platform": "python_custom",
                 "message_id": f"msg_{uuid.uuid4()}",
@@ -383,8 +398,21 @@ async def custom_client():
             }
         }
 
+        # 构造协议信封(Envelope)
+        envelope = {
+            "ver": 1,
+            "msg_id": f"msg_env_{uuid.uuid4()}",
+            "type": "sys_std",
+            "meta": {
+                "sender_user": "your_api_key",
+                "platform": "python_custom",
+                "timestamp": time.time()
+            },
+            "payload": payload
+        }
+
         # 发送消息
-        await websocket.send(json.dumps(message))
+        await websocket.send(json.dumps(envelope))
         print("消息已发送")
 
         # 接收响应（可能包含ACK确认）
@@ -393,8 +421,8 @@ async def custom_client():
 
         if response_data.get("type") == "sys_ack":
             print(f"收到ACK确认: {response_data['meta']['acked_msg_id']}")
-        else:
-            print(f"收到业务消息: {response}")
+        elif response_data.get("type") == "sys_std":
+            print(f"收到业务消息: {response_data['payload']['message_segment']['data']}")
 
 if __name__ == "__main__":
     asyncio.run(custom_client())
@@ -424,8 +452,8 @@ class MaimMessageClient {
 
             if (message.type === 'sys_ack') {
                 console.log('收到ACK确认:', message.meta.acked_msg_id);
-            } else {
-                console.log('收到业务消息:', message);
+            } else if (message.type === 'sys_std') {
+                console.log('收到业务消息:', message.payload);
             }
         };
 
@@ -443,7 +471,8 @@ class MaimMessageClient {
             throw new Error('WebSocket未连接');
         }
 
-        const message = {
+        // 业务消息(Payload)
+        const payload = {
             message_info: {
                 platform: "javascript_custom",
                 message_id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -467,7 +496,20 @@ class MaimMessageClient {
             }
         };
 
-        this.ws.send(JSON.stringify(message));
+        // 协议信封(Envelope)
+        const envelope = {
+            ver: 1,
+            msg_id: `msg_${Date.now()}`,
+            type: "sys_std",
+            meta: {
+                sender_user: this.apiKey,
+                platform: "javascript_custom",
+                timestamp: Date.now() / 1000
+            },
+            payload: payload
+        };
+
+        this.ws.send(JSON.stringify(envelope));
     }
 
     disconnect() {
@@ -534,8 +576,8 @@ public class MaimMessageJavaClient extends WebSocketClient {
 
     public void sendMessage(String text) {
         try {
-            // 构造JSON消息
-            String message = String.format(
+            // 构造JSON消息 (简化示例，实际应使用JSON库如Jackson/Gson)
+            String payload = String.format(
                 "{" +
                 "\"message_info\":{" +
                 "\"platform\":\"java_custom\"," +
@@ -565,7 +607,26 @@ public class MaimMessageJavaClient extends WebSocketClient {
                 apiKey
             );
 
-            this.send(message);
+            // 构造信封
+            String envelope = String.format(
+                "{" +
+                "\"ver\":1," +
+                "\"msg_id\":\"msg_%d\"," +
+                "\"type\":\"sys_std\"," +
+                "\"meta\":{" +
+                "\"sender_user\":\"%s\"," +
+                "\"platform\":\"java_custom\"," +
+                "\"timestamp\":%f" +
+                "}," +
+                "\"payload\":%s" +
+                "}",
+                System.currentTimeMillis(),
+                apiKey,
+                Instant.now().getEpochSecond(),
+                payload
+            );
+
+            this.send(envelope);
             System.out.println("消息已发送: " + text);
         } catch (Exception e) {
             e.printStackTrace();
@@ -597,6 +658,7 @@ import (
     "github.com/gorilla/websocket"
 )
 
+// 定义 payload 结构
 type MessageInfo struct {
     Platform   string    `json:"platform"`
     MessageID  string    `json:"message_id"`
@@ -632,10 +694,25 @@ type MessageDim struct {
     Platform string `json:"platform"`
 }
 
-type Message struct {
+type Payload struct {
     MessageInfo     *MessageInfo   `json:"message_info"`
     MessageSegment  *MessageSegment `json:"message_segment"`
     MessageDim      *MessageDim     `json:"message_dim"`
+}
+
+// 定义 Envelope 结构
+type Envelope struct {
+    Ver     int         `json:"ver"`
+    MsgID   string      `json:"msg_id"`
+    Type    string      `json:"type"`
+    Meta    *Meta       `json:"meta"`
+    Payload *Payload    `json:"payload"`
+}
+
+type Meta struct {
+    SenderUser string  `json:"sender_user"`
+    Platform   string  `json:"platform"`
+    Timestamp  float64 `json:"timestamp"`
 }
 
 func main() {
@@ -658,8 +735,8 @@ func main() {
     }
     defer c.Close()
 
-    // 发送消息
-    message := &Message{
+    // 构造 Payload
+    payload := &Payload{
         MessageInfo: &MessageInfo{
             Platform:  "go_custom",
             MessageID: fmt.Sprintf("msg_%d", time.Now().UnixNano()),
@@ -683,7 +760,20 @@ func main() {
         },
     }
 
-    messageBytes, err := json.Marshal(message)
+    // 构造 Envelope
+    envelope := &Envelope{
+        Ver:    1,
+        MsgID:  fmt.Sprintf("media_%d", time.Now().UnixNano()),
+        Type:   "sys_std",
+        Meta: &Meta{
+            SenderUser: apiKey,
+            Platform:   "go_custom",
+            Timestamp:  float64(time.Now().UnixNano()) / 1e9,
+        },
+        Payload: payload,
+    }
+
+    messageBytes, err := json.Marshal(envelope)
     if err != nil {
         log.Fatal("JSON序列化失败:", err)
     }
@@ -745,7 +835,8 @@ public class MaimMessageCSharpClient
             throw new InvalidOperationException("WebSocket未连接");
         }
 
-        var message = new
+        // 构造 Payload
+        var payload = new
         {
             message_info = new
             {
@@ -775,7 +866,22 @@ public class MaimMessageCSharpClient
             }
         };
 
-        var json = JsonConvert.SerializeObject(message);
+        // 构造 Envelope
+        var envelope = new
+        {
+            ver = 1,
+            msg_id = $"env_{DateTime.Now.Ticks}",
+            type = "sys_std",
+            meta = new
+            {
+                sender_user = _apiKey,
+                platform = "csharp_custom",
+                timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+            },
+            payload = payload
+        };
+
+        var json = JsonConvert.SerializeObject(envelope);
         var buffer = Encoding.UTF8.GetBytes(json);
 
         await _webSocket.SendAsync(
@@ -879,12 +985,12 @@ const ws = new WebSocket(wsUrl, {
 
 ### 常见错误码和消息
 
-| 错误类型 | 说明 | 解决方案 |
-|---------|------|---------|
-| 连接被拒绝 | 服务端未启动或端口错误 | 检查服务端状态和端口配置 |
-| 认证失败 | API Key无效或缺失 | 检查API Key是否正确 |
+| 错误类型     | 说明                         | 解决方案                 |
+| ------------ | ---------------------------- | ------------------------ |
+| 连接被拒绝   | 服务端未启动或端口错误       | 检查服务端状态和端口配置 |
+| 认证失败     | API Key无效或缺失            | 检查API Key是否正确      |
 | 消息格式错误 | JSON格式不正确或缺少必填字段 | 验证消息格式是否符合规范 |
-| 连接超时 | 网络问题或服务端无响应 | 检查网络连接和服务端状态 |
+| 连接超时     | 网络问题或服务端无响应       | 检查网络连接和服务端状态 |
 
 ### 错误处理示例
 
@@ -941,22 +1047,32 @@ except Exception as e:
 2. **wscat**: 命令行WebSocket客户端
 3. **浏览器开发者工具**: 内置WebSocket客户端
 
-### 测试消息
+### 测试消息 (含信封)
 
 ```json
 {
-  "message_info": {
+  "ver": 1,
+  "msg_id": "test_msg_001",
+  "type": "sys_std",
+  "meta": {
+    "sender_user": "test_api_key",
     "platform": "test_client",
-    "message_id": "test_001",
-    "time": 1703123456.789
+    "timestamp": 1703123456.789
   },
-  "message_segment": {
-    "type": "text",
-    "data": "Test message"
-  },
-  "message_dim": {
-    "api_key": "test_api_key",
-    "platform": "test_client"
+  "payload": {
+    "message_info": {
+      "platform": "test_client",
+      "message_id": "test_001",
+      "time": 1703123456.789
+    },
+    "message_segment": {
+      "type": "text",
+      "data": "Test message"
+    },
+    "message_dim": {
+      "api_key": "test_api_key",
+      "platform": "test_client"
+    }
   }
 }
 ```
@@ -974,7 +1090,7 @@ except Exception as e:
 ### 常见问题
 
 **Q: 连接建立成功但收不到消息响应**
-A: 检查消息格式是否包含所有必填字段，特别是message_dim.api_key
+A: 检查消息是否包含了每一层结构：**Envelope (type=sys_std)** -> **Payload (message_segment)**。缺少 Envelope 会导致服务器忽略消息。
 
 **Q: 消息路由失败，接收方收不到消息**
 A: 确认 message_dim.api_key 和 message_dim.platform 设置正确，这些字段指定**目标接收者**而不是发送者
