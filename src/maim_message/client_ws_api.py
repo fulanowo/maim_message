@@ -33,6 +33,9 @@ class WebSocketClient(WebSocketClientBase):
         config.ensure_defaults()
         self.config = config
 
+        # 使用配置中的自定义logger（如果提供）
+        self.logger = config.get_logger()
+
         # 调用基类构造函数
         super().__init__(config)
 
@@ -57,7 +60,7 @@ class WebSocketClient(WebSocketClientBase):
         for key, value in kwargs.items():
             if hasattr(self.config, key):
                 setattr(self.config, key, value)
-                logger.info(f"客户端配置更新: {key} = {value}")
+                self.logger.info(f"客户端配置更新: {key} = {value}")
                 # 更新缓存的连接参数
                 if key == 'url':
                     self._cached_url = value
@@ -66,7 +69,7 @@ class WebSocketClient(WebSocketClientBase):
                 elif key == 'platform':
                     self._cached_platform = value
             else:
-                logger.warning(f"无效的配置项: {key}")
+                self.logger.warning(f"无效的配置项: {key}")
 
         # 重新验证配置
         if not self.config.validate():
@@ -102,7 +105,7 @@ class WebSocketClient(WebSocketClientBase):
             "connection_uuid": self._connection_uuid
         }
 
-        logger.info(f"已连接到服务器 ({self._connection_uuid})")
+        self.logger.info(f"已连接到服务器 ({self._connection_uuid})")
 
     async def _handle_disconnect_event(self, event: NetworkEvent) -> None:
         """处理断连事件"""
@@ -117,17 +120,17 @@ class WebSocketClient(WebSocketClientBase):
         self.stats["connection_uuid"] = None
         self.stats["cached_connection"] = {}
 
-        logger.info(f"与服务器断开连接 ({connection_uuid})")
+        self.logger.info(f"与服务器断开连接 ({connection_uuid})")
 
     async def start(self) -> None:
         """启动客户端"""
         await super().start()
-        logger.info("Single client started")
+        self.logger.info("Single client started")
 
     async def connect(self) -> bool:
         """连接到服务器"""
         if not self.running:
-            logger.error("Client not started")
+            self.logger.error("Client not started")
             return False
 
         if not self._connection_uuid:
@@ -163,16 +166,16 @@ class WebSocketClient(WebSocketClientBase):
             await self.network_driver.connect(self._connection_uuid)
 
             # 等待连接建立（最多等待10秒）
-            logger.info("⏳ 等待连接建立...")
+            self.logger.info("⏳ 等待连接建立...")
             for i in range(100):  # 等待最多10秒
                 await asyncio.sleep(0.1)
                 if self.connected:
-                    logger.info(f"✅ 连接已建立 ({i * 0.1:.1f}s)")
+                    self.logger.info(f"✅ 连接已建立 ({i * 0.1:.1f}s)")
                     return True
                 if not self.running:  # 如果客户端停止了，停止等待
                     break
 
-            logger.warning("⚠️ 连接超时，未收到连接确认")
+            self.logger.warning("⚠️ 连接超时，未收到连接确认")
             self.stats["failed_connects"] += 1
             return False
 
@@ -195,7 +198,7 @@ class WebSocketClient(WebSocketClientBase):
             bool: 发送是否成功
         """
         if not self.connected:
-            logger.warning("Not connected, cannot send message")
+            self.logger.warning("Not connected, cannot send message")
             return False
 
         if not self._connection_uuid:
@@ -231,7 +234,7 @@ class WebSocketClient(WebSocketClientBase):
             bool: 发送是否成功
         """
         if not self.connected:
-            logger.warning("Not connected, cannot send custom message")
+            self.logger.warning("Not connected, cannot send custom message")
             return False
 
         if not self._connection_uuid:
@@ -286,14 +289,14 @@ class WebSocketClient(WebSocketClientBase):
         if not self.running:
             return
 
-        logger.info("Stopping single WebSocket client...")
+        self.logger.info("Stopping single WebSocket client...")
 
         # 断开连接
         await self.disconnect()
 
         # 调用基类的停止方法
         await super().stop()
-        logger.info("Single client stopped")
+        self.logger.info("Single client stopped")
 
     def get_stats(self) -> Dict[str, Any]:
         """获取统计信息"""

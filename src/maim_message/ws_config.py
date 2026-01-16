@@ -59,6 +59,7 @@ class ServerConfig(ConfigValidator):
     log_level: str = "INFO"
     enable_connection_log: bool = True
     enable_message_log: bool = True
+    custom_logger: Optional[Any] = None  # 自定义logger，支持任意有info/debug/error/warning方法的logger对象
 
     def validate(self) -> bool:
         """验证配置是否有效"""
@@ -76,6 +77,14 @@ class ServerConfig(ConfigValidator):
         # 如果需要，可以根据业务需求添加必填字段验证
 
         return missing
+
+    def get_logger(self):
+        """获取配置的logger，如果设置了custom_logger则使用它，否则使用默认logger"""
+        if self.custom_logger is not None:
+            return self.custom_logger
+        # 返回标准logging logger
+        import logging
+        return logging.getLogger(__name__)
 
     def get_default_auth_handler(self) -> Callable[[Dict[str, Any]], bool]:
         """获取默认认证处理器"""
@@ -175,9 +184,18 @@ class ClientConfig(ConfigValidator):
     log_level: str = "INFO"
     enable_connection_log: bool = True
     enable_message_log: bool = True
+    custom_logger: Optional[Any] = None  # 自定义logger，支持任意有info/debug/error/warning方法的logger对象
 
     # HTTP Headers
     headers: Dict[str, str] = field(default_factory=dict)
+
+    def get_logger(self):
+        """获取配置的logger，如果设置了custom_logger则使用它，否则使用默认logger"""
+        if self.custom_logger is not None:
+            return self.custom_logger
+        # 返回标准logging logger
+        import logging
+        return logging.getLogger(__name__)
 
     def validate(self) -> bool:
         """验证配置是否有效"""
