@@ -42,6 +42,7 @@ class ConnectionConfig:
     ping_interval: int = 20
     ping_timeout: int = 10
     close_timeout: int = 10
+    max_size: int = 104_857_600
     max_reconnect_attempts: int = 5
     reconnect_delay: float = 2.0
     max_reconnect_delay: float = 10.0
@@ -83,6 +84,7 @@ class ConnectionConfig:
             "ping_interval": self.ping_interval,
             "ping_timeout": self.ping_timeout,
             "close_timeout": self.close_timeout,
+            "max_size": self.max_size,
             "max_reconnect_attempts": self.max_reconnect_attempts,
             "reconnect_delay": self.reconnect_delay,
             "max_reconnect_delay": self.max_reconnect_delay,
@@ -377,6 +379,7 @@ class ClientNetworkDriver:
                     "ping_interval": config.ping_interval,
                     "ping_timeout": config.ping_timeout,
                     "close_timeout": config.close_timeout,
+                    "max_size": config.max_size,
                     "additional_headers": config.get_headers(),
                 }
 

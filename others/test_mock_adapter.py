@@ -38,7 +38,9 @@ async def test_mock_adapter():
         nonlocal client_message_count, received_messages
 
         try:
-            async with websockets.connect("ws://127.0.0.1:3000") as ws:
+            async with websockets.connect(
+                "ws://127.0.0.1:3000", max_size=104_857_600
+            ) as ws:
                 print("🔗 客户端连接成功\n")
 
                 # 接收消息

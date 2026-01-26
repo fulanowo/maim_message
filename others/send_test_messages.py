@@ -104,7 +104,7 @@ async def send_test_messages():
     print(f"📡 连接到 Mock Adapter: {uri}")
 
     try:
-        async with websockets.connect(uri) as websocket:
+        async with websockets.connect(uri, max_size=104_857_600) as websocket:
             print(f"✅ 连接成功")
 
             # 发送测试消息

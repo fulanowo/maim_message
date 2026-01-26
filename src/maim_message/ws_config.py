@@ -42,6 +42,9 @@ class ServerConfig(ConfigValidator):
     ssl_ca_certs: Optional[str] = None  # CA证书文件路径（可选）
     ssl_verify: bool = False  # 是否验证客户端证书
 
+    # WebSocket消息大小配置
+    max_message_size: int = 104_857_600
+
     # 回调函数配置
     on_auth: Optional[Callable[[Dict[str, Any]], bool]] = None
     on_auth_extract_user: Optional[Callable[[Dict[str, Any]], str]] = None
@@ -190,6 +193,9 @@ class ClientConfig(ConfigValidator):
     ping_interval: int = 20
     ping_timeout: int = 10
     close_timeout: int = 10
+
+    # 消息大小配置
+    max_size: int = 104_857_600
 
     # 回调函数配置
     on_message: Optional[Callable[[APIMessageBase, Dict[str, Any]], None]] = None

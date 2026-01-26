@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 import uuid
 from typing import Any, Callable, Dict, Optional, Set
@@ -33,11 +32,12 @@ class WebSocketServer:
             self.config.host,
             self.config.port,
             self.config.path,
-            self.config.ssl_enabled,
-            self.config.ssl_certfile,
-            self.config.ssl_keyfile,
-            self.config.ssl_ca_certs,
-            self.config.ssl_verify,
+            ssl_enabled=self.config.ssl_enabled,
+            ssl_certfile=self.config.ssl_certfile,
+            ssl_keyfile=self.config.ssl_keyfile,
+            ssl_ca_certs=self.config.ssl_ca_certs,
+            ssl_verify=self.config.ssl_verify,
+            max_message_size=self.config.max_message_size,
             custom_logger=self.config.custom_logger,
         )
 
@@ -125,9 +125,7 @@ class WebSocketServer:
         async def task_wrapper():
             try:
                 await coro
-                self.logger.debug(
-                    f"✅ Handler task {task_id} ({description}) 完成"
-                )
+                self.logger.debug(f"✅ Handler task {task_id} ({description}) 完成")
             except Exception as e:
                 self.logger.error(
                     f"❌ Handler task {task_id} ({description}) 异常: {e}"
@@ -217,9 +215,7 @@ class WebSocketServer:
         self.stats["current_users"] = len(self.user_connections)
         self.stats["current_connections"] = len(self.connection_users)
 
-        self.logger.info(
-            f"用户 {user_id} 从 {platform} 平台连接 ({connection_uuid})"
-        )
+        self.logger.info(f"用户 {user_id} 从 {platform} 平台连接 ({connection_uuid})")
 
     async def _handle_disconnect_event(self, event: NetworkEvent) -> None:
         """处理断连事件"""
@@ -378,9 +374,7 @@ class WebSocketServer:
 
                 # 分发事件
                 if event.event_type == EventType.CONNECT:
-                    self.logger.debug(
-                        f"🔗 Processing CONNECT event for {event.uuid}"
-                    )
+                    self.logger.debug(f"🔗 Processing CONNECT event for {event.uuid}")
                     await self._handle_connect_event(event)
                 elif event.event_type == EventType.DISCONNECT:
                     self.logger.debug(
@@ -388,9 +382,7 @@ class WebSocketServer:
                     )
                     await self._handle_disconnect_event(event)
                 elif event.event_type == EventType.MESSAGE:
-                    self.logger.debug(
-                        f"💬 Processing MESSAGE event for {event.uuid}"
-                    )
+                    self.logger.debug(f"💬 Processing MESSAGE event for {event.uuid}")
                     await self._handle_message_event(event)
 
             except asyncio.TimeoutError:
@@ -445,9 +437,7 @@ class WebSocketServer:
         # 从消息中获取路由信息
         api_key = message.get_api_key()
         platform = message.get_platform()
-        self.logger.info(
-            f"📨 消息路由信息: api_key={api_key}, platform={platform}"
-        )
+        self.logger.info(f"📨 消息路由信息: api_key={api_key}, platform={platform}")
 
         # 使用 extract_user 回调获取用户ID
         try:
@@ -468,14 +458,10 @@ class WebSocketServer:
         # 使用三级映射表获取目标用户的连接
         if target_user not in self.user_connections:
             self.logger.warning(f"❌ 用户 {target_user} 没有连接")
-            self.logger.info(
-                f"📋 可用的用户: {list(self.user_connections.keys())}"
-            )
+            self.logger.info(f"📋 可用的用户: {list(self.user_connections.keys())}")
             return results
 
-        self.logger.info(
-            f"✅ 找到用户 {target_user}，在 {platform} 平台获取其连接"
-        )
+        self.logger.info(f"✅ 找到用户 {target_user}，在 {platform} 平台获取其连接")
 
         # 获取用户在指定平台的所有连接
         user_platform_connections = self.user_connections[target_user]

@@ -16,6 +16,7 @@ import ssl
 # 基础Python WebSocket客户端
 # ===========================================
 
+
 class BasicWebSocketClient:
     """基础WebSocket客户端"""
 
@@ -30,7 +31,7 @@ class BasicWebSocketClient:
         try:
             # 方式1：通过查询参数（推荐）
             ws_url = f"{self.url}?api_key={self.api_key}&platform={self.platform}"
-            self.websocket = await websockets.connect(ws_url)
+            self.websocket = await websockets.connect(ws_url, max_size=104_857_600)
             print(f"✅ 连接成功: {self.url}")
             return True
         except Exception as e:
@@ -43,7 +44,7 @@ class BasicWebSocketClient:
             user_info = {
                 "user_id": f"{self.platform}_user",
                 "user_nickname": f"{self.platform}客户端",
-                "user_cardname": f"{self.platform}客户端"
+                "user_cardname": f"{self.platform}客户端",
             }
 
         message = {
@@ -51,21 +52,10 @@ class BasicWebSocketClient:
                 "platform": self.platform,
                 "message_id": f"msg_{uuid.uuid4()}",
                 "time": time.time(),
-                "sender_info": {
-                    "user_info": {
-                        "platform": self.platform,
-                        **user_info
-                    }
-                }
+                "sender_info": {"user_info": {"platform": self.platform, **user_info}},
             },
-            "message_segment": {
-                "type": "text",
-                "data": text
-            },
-            "message_dim": {
-                "api_key": self.api_key,
-                "platform": self.platform
-            }
+            "message_segment": {"type": "text", "data": text},
+            "message_dim": {"api_key": self.api_key, "platform": self.platform},
         }
         return message
 
@@ -91,7 +81,9 @@ class BasicWebSocketClient:
         try:
             message = await self.websocket.recv()
             data = json.loads(message)
-            print(f"📨 收到消息: {data.get('message_segment', {}).get('data', 'Unknown')}")
+            print(
+                f"📨 收到消息: {data.get('message_segment', {}).get('data', 'Unknown')}"
+            )
             return data
         except Exception as e:
             print(f"❌ 接收失败: {e}")
@@ -103,15 +95,18 @@ class BasicWebSocketClient:
             await self.websocket.close()
             print("🔌 连接已关闭")
 
+
 # ===========================================
 # SSL安全连接客户端
 # ===========================================
 
+
 class SecureWebSocketClient(BasicWebSocketClient):
     """支持SSL的WebSocket客户端"""
 
-    def __init__(self, url, api_key, platform="python_secure",
-                 ssl_verify=True, ssl_ca_file=None):
+    def __init__(
+        self, url, api_key, platform="python_secure", ssl_verify=True, ssl_ca_file=None
+    ):
         # 确保使用wss://协议
         if not url.startswith("wss://"):
             url = url.replace("ws://", "wss://")
@@ -139,7 +134,9 @@ class SecureWebSocketClient(BasicWebSocketClient):
 
             # 构建连接URL（包含API Key和平台）
             ws_url = f"{self.url}?api_key={self.api_key}&platform={self.platform}"
-            self.websocket = await websockets.connect(ws_url, ssl=ssl_context)
+            self.websocket = await websockets.connect(
+                ws_url, ssl=ssl_context, max_size=104_857_600
+            )
             print(f"✅ SSL连接成功: {self.url}")
             return True
 
@@ -147,15 +144,23 @@ class SecureWebSocketClient(BasicWebSocketClient):
             print(f"❌ SSL连接失败: {e}")
             return False
 
+
 # ===========================================
 # 自动重连客户端
 # ===========================================
 
+
 class ReconnectingWebSocketClient(BasicWebSocketClient):
     """支持自动重连的WebSocket客户端"""
 
-    def __init__(self, url, api_key, platform="python_reconnect",
-                 max_reconnect_attempts=5, reconnect_delay=2):
+    def __init__(
+        self,
+        url,
+        api_key,
+        platform="python_reconnect",
+        max_reconnect_attempts=5,
+        reconnect_delay=2,
+    ):
         super().__init__(url, api_key, platform)
         self.max_reconnect_attempts = max_reconnect_attempts
         self.reconnect_delay = reconnect_delay
@@ -196,38 +201,48 @@ class ReconnectingWebSocketClient(BasicWebSocketClient):
                 return await self.send_message(text, user_info)
             return False
 
+
 # ===========================================
 # 客户端工厂和便捷函数
 # ===========================================
+
 
 class WebSocketClientFactory:
     """WebSocket客户端工厂"""
 
     @staticmethod
-    def create_basic_client(host="localhost", port=18040,
-                           api_key="demo_key", platform="demo"):
+    def create_basic_client(
+        host="localhost", port=18040, api_key="demo_key", platform="demo"
+    ):
         """创建基础客户端"""
         url = f"ws://{host}:{port}/ws"
         return BasicWebSocketClient(url, api_key, platform)
 
     @staticmethod
-    def create_ssl_client(host="localhost", port=18044,
-                         api_key="demo_key", platform="demo",
-                         ssl_verify=False):
+    def create_ssl_client(
+        host="localhost",
+        port=18044,
+        api_key="demo_key",
+        platform="demo",
+        ssl_verify=False,
+    ):
         """创建SSL客户端"""
         url = f"wss://{host}:{port}/ws"
         return SecureWebSocketClient(url, api_key, platform, ssl_verify)
 
     @staticmethod
-    def create_reconnecting_client(host="localhost", port=18040,
-                                  api_key="demo_key", platform="demo"):
+    def create_reconnecting_client(
+        host="localhost", port=18040, api_key="demo_key", platform="demo"
+    ):
         """创建自动重连客户端"""
         url = f"ws://{host}:{port}/ws"
         return ReconnectingWebSocketClient(url, api_key, platform)
 
+
 # ===========================================
 # 示例使用函数
 # ===========================================
+
 
 async def basic_client_example():
     """基础客户端示例"""
@@ -235,8 +250,7 @@ async def basic_client_example():
     print("-" * 40)
 
     client = WebSocketClientFactory.create_basic_client(
-        api_key="basic_demo_key",
-        platform="python_basic_demo"
+        api_key="basic_demo_key", platform="python_basic_demo"
     )
 
     try:
@@ -245,7 +259,7 @@ async def basic_client_example():
             messages = [
                 "Hello from basic client!",
                 "这是来自基础Python客户端的消息",
-                "WebSocket通信测试 🎉"
+                "WebSocket通信测试 🎉",
             ]
 
             for msg in messages:
@@ -259,6 +273,7 @@ async def basic_client_example():
     finally:
         await client.close()
 
+
 async def ssl_client_example():
     """SSL客户端示例"""
     print("\n🔒 SSL WebSocket客户端示例")
@@ -268,7 +283,7 @@ async def ssl_client_example():
         port=18044,
         api_key="ssl_demo_key",
         platform="python_ssl_demo",
-        ssl_verify=False  # 开发环境禁用证书验证
+        ssl_verify=False,  # 开发环境禁用证书验证
     )
 
     try:
@@ -276,7 +291,7 @@ async def ssl_client_example():
             secure_messages = [
                 "🛡️ 安全连接测试消息",
                 "这是通过SSL/TLS加密传输的消息",
-                "数据加密验证成功 🔐"
+                "数据加密验证成功 🔐",
             ]
 
             for msg in secure_messages:
@@ -286,14 +301,14 @@ async def ssl_client_example():
     finally:
         await client.close()
 
+
 async def reconnecting_client_example():
     """自动重连客户端示例"""
     print("\n🔄 自动重连WebSocket客户端示例")
     print("-" * 40)
 
     client = WebSocketClientFactory.create_reconnecting_client(
-        api_key="reconnect_demo_key",
-        platform="python_reconnect_demo"
+        api_key="reconnect_demo_key", platform="python_reconnect_demo"
     )
 
     try:
@@ -301,7 +316,7 @@ async def reconnecting_client_example():
             resilient_messages = [
                 "第一条消息（正常连接）",
                 "第二条消息（测试连接稳定性）",
-                "第三条消息（验证重连机制）"
+                "第三条消息（验证重连机制）",
             ]
 
             for msg in resilient_messages:
@@ -315,14 +330,14 @@ async def reconnecting_client_example():
     finally:
         await client.close()
 
+
 async def group_message_example():
     """群组消息示例"""
     print("\n👥 群组消息示例")
     print("-" * 40)
 
     client = WebSocketClientFactory.create_basic_client(
-        api_key="group_demo_key",
-        platform="python_group_demo"
+        api_key="group_demo_key", platform="python_group_demo"
     )
 
     try:
@@ -331,7 +346,7 @@ async def group_message_example():
             group_user_info = {
                 "user_id": "group_user_001",
                 "user_nickname": "群成员小明",
-                "user_cardname": "产品经理-小明"
+                "user_cardname": "产品经理-小明",
             }
 
             # 群组消息结构
@@ -343,23 +358,23 @@ async def group_message_example():
                     "sender_info": {
                         "user_info": {
                             "platform": "python_group_demo",
-                            **group_user_info
+                            **group_user_info,
                         },
                         "group_info": {
                             "platform": "python_group_demo",
                             "group_id": "demo_group_001",
-                            "group_name": "maim_message技术交流群"
-                        }
-                    }
+                            "group_name": "maim_message技术交流群",
+                        },
+                    },
                 },
                 "message_segment": {
                     "type": "text",
-                    "data": "大家好，我是通过自定义客户端加入群聊的成员！"
+                    "data": "大家好，我是通过自定义客户端加入群聊的成员！",
                 },
                 "message_dim": {
                     "api_key": "group_demo_key",
-                    "platform": "python_group_demo"
-                }
+                    "platform": "python_group_demo",
+                },
             }
 
             await client.websocket.send(json.dumps(group_message))
@@ -373,14 +388,14 @@ async def group_message_example():
     finally:
         await client.close()
 
+
 async def image_message_example():
     """图片消息示例"""
     print("\n🖼️ 图片消息示例")
     print("-" * 40)
 
     client = WebSocketClientFactory.create_basic_client(
-        api_key="image_demo_key",
-        platform="python_image_demo"
+        api_key="image_demo_key", platform="python_image_demo"
     )
 
     try:
@@ -389,7 +404,7 @@ async def image_message_example():
             image_message = client.create_message("")
             image_message["message_segment"] = {
                 "type": "image",
-                "data": "https://via.placeholder.com/300x200.png?text=Demo+Image"
+                "data": "https://via.placeholder.com/300x200.png?text=Demo+Image",
             }
 
             await client.websocket.send(json.dumps(image_message))
@@ -403,9 +418,11 @@ async def image_message_example():
     finally:
         await client.close()
 
+
 # ===========================================
 # 主函数和测试套件
 # ===========================================
+
 
 async def main():
     """主函数 - 运行所有示例"""
@@ -443,6 +460,7 @@ async def main():
     print("   - 默认连接地址: ws://localhost:18040/ws")
     print("   - 可以通过修改示例参数连接到不同服务器")
     print("   - 更多信息请参考: doc/external_client_communication_guide.md")
+
 
 if __name__ == "__main__":
     print("🔧 启动非maim_message客户端示例...")

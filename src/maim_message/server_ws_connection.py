@@ -85,6 +85,7 @@ class ServerNetworkDriver:
         ssl_keyfile: str = None,
         ssl_ca_certs: str = None,
         ssl_verify: bool = False,
+        max_message_size: int = 104_857_600,
         custom_logger: Optional[Any] = None,
     ):
         self.host = host
@@ -97,6 +98,9 @@ class ServerNetworkDriver:
         self.ssl_keyfile = ssl_keyfile
         self.ssl_ca_certs = ssl_ca_certs
         self.ssl_verify = ssl_verify
+
+        # WebSocket消息大小限制
+        self.max_message_size = max_message_size
 
         print(
             f"[ServerNetworkDriver DEBUG] custom_logger type: {type(custom_logger)}, value: {custom_logger}",
@@ -208,7 +212,7 @@ class ServerNetworkDriver:
         """处理WebSocket连接的完整生命周期"""
         # 1. 接受连接
         await websocket.accept()
-        logger.info(f"[DEBUG] Connection accepted in _handle_connection")
+        logger.info("[DEBUG] Connection accepted in _handle_connection")
 
         # 2. 提取连接元数据
         metadata = self._extract_metadata(
@@ -607,6 +611,7 @@ class ServerNetworkDriver:
                 "host": self.host,
                 "port": self.port,
                 "log_level": "warning",  # 减少uvicorn日志
+                "ws_max_size": self.max_message_size,
             }
 
             # 添加SSL配置
@@ -682,7 +687,7 @@ class ServerNetworkDriver:
         if self.running:
             logger.warning(f"Network driver already running on {self.host}:{self.port}")
             print(
-                f"[DEBUG SERVER_NETWORK_DRIVER] start() returning early - already running",
+                "[DEBUG SERVER_NETWORK_DRIVER] start() returning early - already running",
                 file=sys.stderr,
                 flush=True,
             )
@@ -691,7 +696,7 @@ class ServerNetworkDriver:
         # 在主事件循环中启动服务器
         logger.info(f"Starting network driver on {self.host}:{self.port}{self.path}")
         print(
-            f"[DEBUG SERVER_NETWORK_DRIVER] Calling _server_loop_run",
+            "[DEBUG SERVER_NETWORK_DRIVER] Calling _server_loop_run",
             file=sys.stderr,
             flush=True,
         )

@@ -308,6 +308,10 @@ class WebSocketMultiClient(WebSocketClientBase):
                 platform=conn_info.platform,
                 connection_uuid=connection_uuid,
                 headers=conn_info.kwargs.get("headers", {}),
+                ping_interval=conn_info.kwargs.get("ping_interval", 20),
+                ping_timeout=conn_info.kwargs.get("ping_timeout", 10),
+                close_timeout=conn_info.kwargs.get("close_timeout", 10),
+                max_size=conn_info.kwargs.get("max_size", 104_857_600),
                 max_reconnect_attempts=conn_info.kwargs.get(
                     "max_reconnect_attempts", 5
                 ),
