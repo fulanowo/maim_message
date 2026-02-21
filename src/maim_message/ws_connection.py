@@ -549,8 +549,26 @@ class WebSocketClient(BaseConnection, ClientConnectionInterface):
                         self.retry_count += 1
                         continue
 
+                # 检查连接是否仍然有效
+                if not self.is_connected():
+                    logger.debug("连接不再有效，重新连接")
+                    self.ws_connected = False
+                    continue
+
+                # 确保ws不为None（满足类型检查）
+                if self.ws is None:
+                    logger.debug("WebSocket连接为None，重新连接")
+                    self.ws_connected = False
+                    continue
+
                 async for msg in self.ws:
                     if not self._running:
+                        break
+
+                    # 在每次消息处理前检查连接是否有效
+                    if not self.is_connected():
+                        logger.debug("连接在处理消息期间断开")
+                        self.ws_connected = False
                         break
 
                     if msg.type == WSMsgType.TEXT:
@@ -565,7 +583,10 @@ class WebSocketClient(BaseConnection, ClientConnectionInterface):
                     elif msg.type == WSMsgType.BINARY:
                         logger.debug("收到二进制消息，已忽略")
                     elif msg.type == WSMsgType.PING:
-                        logger.debug("收到服务器 PING，自动回复 PONG")
+                        if self.ws and not self.ws.closed:
+                            logger.debug("收到服务器 PING，自动回复 PONG")
+                        else:
+                            logger.debug("收到服务器 PING但连接已关闭，跳过回复")
                     elif msg.type == WSMsgType.PONG:
                         logger.debug("收到服务器 PONG 响应")
                     elif msg.type == WSMsgType.ERROR:
